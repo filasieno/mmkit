@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1781525632,
-        "narHash": "sha256-G50CNn5xLrqE9g4xxibsgv3ovbVtsz25wjlZLnRGLF4=",
+        "lastModified": 1781526795,
+        "narHash": "sha256-LRAKfgnGehvM04Yphb70Z9Sax0KnjFsUeJN7vD4PYVs=",
         "owner": "filasieno",
         "repo": "conceptbase-cc",
-        "rev": "8f88183f6ad19d675ff67c9b5c56154c185245dd",
+        "rev": "feedad73f103f9e23fadef856b1816bea896f2ed",
         "type": "github"
       },
       "original": {

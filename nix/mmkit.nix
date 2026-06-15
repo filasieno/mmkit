@@ -6,14 +6,18 @@
   nodejs,
   esbuild,
   src,
+  npmDeps,
+  npmConfigHook,
 }:
 
 stdenvNoCC.mkDerivation rec {
   pname = "mmkit";
   version = "0.2.0";
-  inherit src;
+  inherit src npmDeps;
 
-  nativeBuildInputs = [ vsce nodejs esbuild ];
+  npmInstallFlags = [ "--include=optional" ];
+
+  nativeBuildInputs = [ vsce nodejs esbuild npmConfigHook ];
 
   dontConfigure = true;
   doCheck = true;
@@ -21,14 +25,13 @@ stdenvNoCC.mkDerivation rec {
   buildPhase = ''
     runHook preBuild
     export HOME="$TMPDIR"
-    cp -r --no-preserve=mode,ownership "$src" build
-    cd build
 
-    npm install --workspaces --include=dev
-    npm run build
+    npm run build -w @mmkit/shared
+    npm run build -w @mmkit/server
+    npm run build -w mmkit
 
     cd packages/extension
-    vsce package --no-dependencies --out "mmkit-${version}.vsix"
+    echo y | vsce package --no-dependencies --allow-missing-repository --out "mmkit-${version}.vsix"
     cd ../..
     runHook postBuild
   '';
@@ -36,7 +39,6 @@ stdenvNoCC.mkDerivation rec {
   checkPhase = ''
     runHook preCheck
     export HOME="$TMPDIR"
-    cd build
     npm test
     test -s packages/extension/out/extension.js
     test -s packages/server/dist/server.js
@@ -49,7 +51,7 @@ stdenvNoCC.mkDerivation rec {
   installPhase = ''
     runHook preInstall
     mkdir -p "$out"
-    cp "build/packages/extension/mmkit-${version}.vsix" "$out/"
+    cp "packages/extension/mmkit-${version}.vsix" "$out/"
     runHook postInstall
   '';
 

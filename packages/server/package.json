@@ -8,7 +8,7 @@
     "mmkit-server": "./dist/server.js"
   },
   "scripts": {
-    "pregenerate": "node ../../../tools/generate-cbserver-settings-meta.mjs",
+    "pregenerate": "node ../../tools/generate-cbserver-settings-meta.mjs",
     "prebuild": "npm run pregenerate",
     "build": "node esbuild.mjs",
     "test": "rm -rf out-test && tsc -p test/cbserver/tsconfig.json && mocha 'out-test/test/cbserver/**/*.test.js' --ignore 'out-test/test/cbserver/**/*.real.test.js'",
@@ -19,6 +19,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
     "@mmkit/shared": "0.2.0",
     "@modelcontextprotocol/express": "^2.0.0-alpha.2",
     "@modelcontextprotocol/node": "^2.0.0-alpha.2",

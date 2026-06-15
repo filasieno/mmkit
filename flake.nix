@@ -13,24 +13,35 @@
       pkgs = nixpkgs.legacyPackages.${system};
       cbserver = conceptbase-cc.packages.${system}.cbserver;
 
-      mmkitSrc = builtins.path {
-        path = ./.;
-        name = "mmkit-src";
-        filter = path: type:
-          let base = baseNameOf path;
-          in base != "node_modules"
+      mmkitSrc = pkgs.lib.cleanSourceWith {
+        src = ./.;
+        filter =
+          path: type:
+          let
+            base = baseNameOf path;
+          in
+            base != "node_modules"
             && base != "out-test"
             && base != "out-test-integration"
             && base != "result"
             && base != ".git"
-            && base != ".direnv";
+            && base != ".direnv"
+            && base != ".vscode-test"
+            && base != "coverage";
+      };
+
+      npmDeps = pkgs.fetchNpmDeps {
+        src = mmkitSrc;
+        hash = "sha256-6dpRanUr58cuJl69I4NycZXPs3+hKQfDpFEKIQ3Ekvc=";
       };
     in
     {
       packages.${system} = {
         mmkit = pkgs.callPackage ./nix/mmkit.nix {
           src = mmkitSrc;
+          inherit npmDeps;
           inherit (pkgs) vsce nodejs esbuild;
+          npmConfigHook = pkgs.npmHooks.npmConfigHook;
         };
         default = self.packages.${system}.mmkit;
       };
