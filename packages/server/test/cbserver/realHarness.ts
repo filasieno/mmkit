@@ -12,14 +12,25 @@ import { createServer } from "node:net";
 import { expect } from "chai";
 import * as ihsm from "ihsm/testing";
 import { CBServerTop, Uninitialized } from "../../src/cbserver/actors/server/CBServerActor";
+// Register child-actor @InitialState chains when real suites run without connection.test.ts.
+import "../../src/cbserver/actors/connection/CBServerConnectionActor";
+import "../../src/cbserver/actors/commandChannel/CBCommandChannelActor";
+import "../../src/cbserver/actors/notificationChannel/CBNotificationChannelActor";
+import "../../src/cbserver/actors/reader/CBConnectionReaderActor";
+import "../../src/cbserver/actors/writer/CBConnectionWriterActor";
 import { cbActorSpawnOptions } from "../../src/cbserver/shared/cbActorSpawnOptions";
 import { CBServerConfig } from "../../src/cbserver/actors/server/settings/CBServerSettings";
 import { DEFAULT_CB_TCP_CONNECT_MS } from "../../src/cbserver/shared/CBTcpOptions";
 import { CBServerContext } from "../../src/cbserver/actors/server/CBServerContext";
-import type { CBAnswer, ICBConnection } from "../../src/cbserver/shared/CBServerDefs";
+import type { CBAnswer, CBConnectionActorHandle } from "../../src/cbserver/shared/CBServerDefs";
 import { CBServerPort } from "../../src/cbserver/actors/server/CBServerPort";
+import { closeConnection } from "../../src/cbserver/actors/connection/connectionLifecycle";
 import { cbTrace, cbTraceAnswer } from "../../src/cbserver/shared/cbTrace";
 import { currentPhasePath, formatLiveServersSnapshot, hangLog, popPhase, pushPhase, resetPhases, } from "./hangGuard";
+import type { RunningServer, TestSession } from "./harnessTypes";
+
+export type { RunningServer };
+export type RealSession = TestSession;
 
 function realTestActorOptions(): ihsm.ActorOptions {
   return cbActorSpawnOptions({ initialize: false });
@@ -108,17 +119,6 @@ export async function runTimed<T>( label: string, work: () => Promise<T>, ms: nu
   return result;
 }
 
-export type RunningServer = {
-  actor: ReturnType<typeof ihsm.makeTestActor<typeof CBServerTop>>;
-  ctx: CBServerContext;
-  port: CBServerPort;
-};
-
-export type RealSession = {
-  server: RunningServer;
-  connection: ICBConnection;
-};
-
 export const liveServers: RunningServer[] = [];
 let dbCounter = 0;
 
@@ -167,17 +167,17 @@ export async function waitForServerState( server: RunningServer, state: string, 
 }
 
 export async function bootRunning(config: CBServerConfig): Promise<RunningServer> {
-  return raceTimeout( (async () => { const port = new CBServerPort(); const ctx = new CBServerContext(config); const actor = ihsm.makeTestActor(CBServerTop, ctx, port, realTestActorOptions()); actor.hsm.restore(Uninitialized, ctx); await raceTimeout(actor.call.initialize(), "initialize", MS.init); await syncServer({ actor, ctx, port }, "init-sync"); expect(actor.hsm.currentStateName).to.equal("Stopped"); actor.notify.start(); await waitForServerState({ actor, ctx, port }, "Running", "start", MS.start); expect(ctx.children?.stdoutLogReader).to.not.equal(undefined); expect(ctx.children?.stderrLogReader).to.not.equal(undefined); const server = { actor, ctx, port }; liveServers.push(server); return server; })(), "boot-running", MS.boot );
+  return raceTimeout( (async () => { const port = new CBServerPort(); const ctx = new CBServerContext(config); const actor = ihsm.makeTestActor(CBServerTop, ctx, port, realTestActorOptions()); actor.hsm.restore(Uninitialized, ctx); const init = await raceTimeout(actor.call.initialize(), "initialize", MS.init); await raceTimeout(init.wait(), "initialize-wait", MS.init); await syncServer({ actor, ctx, port }, "init-sync"); expect(actor.hsm.currentStateName).to.equal("Stopped"); actor.notify.start(); await waitForServerState({ actor, ctx, port }, "Running", "start", MS.start); expect(ctx.children?.stdoutLogReader).to.not.equal(undefined); expect(ctx.children?.stderrLogReader).to.not.equal(undefined); const server = { actor, ctx, port }; liveServers.push(server); return server; })(), "boot-running", MS.boot );
 }
 
-export async function openConnection(server: RunningServer): Promise<ICBConnection> {
+export async function openConnection(server: RunningServer): Promise<CBConnectionActorHandle> {
   const connection = await raceTimeout( server.actor.call.createConnection({ connectTimeoutMs: DEFAULT_CB_TCP_CONNECT_MS, socketTimeoutMs: REAL_TEST_SOCKET_MS, }), "create-connection", MS.conn );
   await syncServer(server, "connection-sync");
   expect(server.ctx.connections.size).to.be.greaterThan(0);
   return connection;
 }
 
-export async function runCommand( server: RunningServer, connection: ICBConnection, label: string, work: () => Promise<CBAnswer> ): Promise<CBAnswer> {
+export async function runCommand( server: RunningServer, connection: CBConnectionActorHandle, label: string, work: () => Promise<CBAnswer> ): Promise<CBAnswer> {
   cbTrace(`test:cmd:start:${label}`);
   const answer = await raceTimeout(work(), label, MS.cmd);
   await syncServer(server, `${label}-sync`);
@@ -209,11 +209,11 @@ export async function waitForEmptyRegistry( server: RunningServer, label: string
 }
 
 /** Manual § CANCEL_ME — disconnect client before TCP teardown. */
-export async function gracefulCloseConnection(server: RunningServer, connection: ICBConnection): Promise<void> {
+export async function gracefulCloseConnection(server: RunningServer, connection: CBConnectionActorHandle): Promise<void> {
   const openBefore = server.ctx.connections.size;
   expect(openBefore).to.be.greaterThan(0);
   try {
-    await raceTimeout( (async () => { await raceTimeout(connection.close(), "close", MS.close); await waitForRegistrySize(server, "close-registry", openBefore - 1, MS.close); })(), "graceful-close-connection", MS.close + 250 );
+    await raceTimeout( (async () => { await raceTimeout(closeConnection(connection), "close", MS.close); await waitForRegistrySize(server, "close-registry", openBefore - 1, MS.close); })(), "graceful-close-connection", MS.close + 250 );
   } catch (err) {
     cbTrace(`test:teardown:graceful-close-failed:${String(err)}`);
     for (const child of server.ctx.connections.values()) {
@@ -276,7 +276,7 @@ export async function withRealSession( label: string, work: (session: RealSessio
   pushPhase(`withRealSession:${label}`);
   try {
     const server = await bootRunning(await makeConfig(label));
-    let connection: ICBConnection | undefined;
+    let connection: CBConnectionActorHandle | undefined;
     try {
       connection = await openConnection(server);
       await runTimed(`session-body:${label}`, () => work({ server, connection: connection! }), MS.session);

@@ -32,7 +32,7 @@
 
       npmDeps = pkgs.fetchNpmDeps {
         src = mmkitSrc;
-        hash = "sha256-6dpRanUr58cuJl69I4NycZXPs3+hKQfDpFEKIQ3Ekvc=";
+        hash = "sha256-i1JO5KgR1TrZvCo3BWl3niki2Asrv7obYimzx4WZSvs=";
       };
     in
     {

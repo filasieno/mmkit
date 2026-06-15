@@ -1,24 +1,37 @@
 /**
- * Real cbserver — lifecycle: ENROLL, CANCEL_ME graceful close, supervisor stop.
+ * Mock ports — lifecycle: ENROLL, CANCEL_ME graceful close, supervisor stop.
+ * Identical to lifecycle.real.test.ts; only the harness differs.
  */
 /// <reference types="mocha" />
 import { expect } from "chai";
 import { waitCommand } from "../../src/cbserver/shared/CBServerDefs";
-import { describeReal, gracefulCloseConnection, installRealTestGuards, MS, openConnection, PER_TEST_TIMEOUT_MS, raceTimeout, runCommand, waitForRegistrySize, waitForServerState, withRealServer, withRealSession, } from "./realHarness";
-import { CBServerPort } from "../../src/cbserver/actors/server/CBServerPort";
+import {
+  gracefulCloseConnection,
+  installMockTestGuards,
+  MS,
+  openConnection,
+  PER_TEST_TIMEOUT_MS,
+  raceTimeout,
+  runCommand,
+  type MockRunningServer,
+  waitForRegistrySize,
+  waitForServerState,
+  withMockServer,
+  withMockSession,
+} from "./mockHarness";
 
-describeReal("CBServer lifecycle [real cbserver]", function () {
+describe("CBServer lifecycle [mock port]", function () {
   this.timeout(PER_TEST_TIMEOUT_MS);
-  installRealTestGuards(this);
+  installMockTestGuards(this);
 
   it("ENROLL on connect, CANCEL_ME on close, supervisor reaches Stopped", async function () {
-    await withRealSession("lifecycle-cancel", async ({ server, connection }) => {
+    await withMockSession("lifecycle-cancel", async ({ server, connection }) => {
       await runCommand(server, connection, "pwd-after-enroll", () => waitCommand(connection.call.pwd()));
     });
   });
 
   it("close is idempotent-safe on supervisor registry (one connection slot)", async function () {
-    await withRealServer("lifecycle-registry", async (server) => {
+    await withMockServer("lifecycle-registry", async (server) => {
       const connection = await openConnection(server);
       expect(server.ctx.connections.size).to.equal(1);
       await gracefulCloseConnection(server, connection);
@@ -27,7 +40,7 @@ describeReal("CBServer lifecycle [real cbserver]", function () {
   });
 
   it("two connections: close each with CANCEL_ME before server stop", async function () {
-    await withRealServer("lifecycle-dual", async (server) => {
+    await withMockServer("lifecycle-dual", async (server) => {
       const left = await openConnection(server);
       const right = await openConnection(server);
       expect(server.ctx.connections.size).to.equal(2);
@@ -42,7 +55,7 @@ describeReal("CBServer lifecycle [real cbserver]", function () {
 
   it("stop waits for subprocess exit (no forced SIGKILL on happy path)", async function () {
     let pid: number | undefined;
-    await withRealServer("lifecycle-stop", async (server) => {
+    await withMockServer("lifecycle-stop", async (server) => {
       pid = server.ctx.pid;
       expect(pid).to.be.a("number");
       const connection = await openConnection(server);
@@ -52,7 +65,7 @@ describeReal("CBServer lifecycle [real cbserver]", function () {
       new Promise<void>((resolve, reject) => {
         try {
           process.kill(pid!, 0);
-          reject(new Error(`cbserver pid ${pid} still running after graceful stop`));
+          reject(new Error(`mock cbserver pid ${pid} still running after graceful stop`));
         } catch {
           resolve();
         }
@@ -63,15 +76,15 @@ describeReal("CBServer lifecycle [real cbserver]", function () {
   });
 
   it("server stop closes open connections before SIGTERM", async function () {
-    await withRealServer("lifecycle-stop-open-conn", async (server) => {
+    await withMockServer("lifecycle-stop-open-conn", async (server) => {
       expect(server.ctx.pid).to.be.a("number");
       let connectionsAtKill = -1;
-      const port = server.port as CBServerPort;
-      const originalKill = port.kill.bind(port);
-      port.kill = async (targetPid: number, signal?: NodeJS.Signals) => {
+      const mockPort = server.port as MockRunningServer["port"];
+      mockPort.kill.once(async (targetPid, signal) => {
         connectionsAtKill = server.ctx.connections.size;
-        return originalKill(targetPid, signal);
-      };
+        mockPort.record("kill", targetPid, signal);
+        mockPort.send("onProcessExit", 0, null);
+      });
       const connection = await openConnection(server);
       await runCommand(server, connection, "pwd-before-stop", () => waitCommand(connection.call.pwd()));
       expect(server.ctx.connections.size).to.equal(1);

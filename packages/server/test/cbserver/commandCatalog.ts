@@ -22,17 +22,13 @@ import * as fs from "node:fs/promises";
 import { expect } from "chai";
 import { CB_IPC_METHODS } from "../../src/cbserver/shared/cbIpcCatalog";
 import type { CBIpcMethod } from "../../src/cbserver/shared/cbIpcCatalog";
-import type { CBAnswer, ICBConnection } from "../../src/cbserver/shared/CBServerDefs";
+import type { CBAnswer, CBConnectionActorHandle } from "../../src/cbserver/shared/CBServerDefs";
+import { waitCommand } from "../../src/cbserver/shared/CBServerDefs";
 import { javaDeleteNotificationAbout, javaPrologLpiGoal, javaViewNotificationAbout, JAVA_ORACLE, } from "./javaOracle";
 import { MS, runTimed } from "./realHarness";
-import type { RunningServer } from "./realHarness";
+import type { RunningServer, RunCommand } from "./harnessTypes";
 
-export type RunCommand = (
-  server: RunningServer,
-  connection: ICBConnection,
-  label: string,
-  work: () => Promise<CBAnswer>,
-) => Promise<CBAnswer>;
+export type { RunCommand };
 
 /** API methods documented in Server-Interface.typ (+ libcbc helpers). */
 export const SERVER_INTERFACE_API_METHODS = [
@@ -71,7 +67,7 @@ export const ICB_CONNECTION_API_METHODS = [
   ...CINTERFACE_EXTENSION_API_METHODS,
 ] as const;
 
-export type ICBConnectionApiMethod = (typeof ICB_CONNECTION_API_METHODS)[number];
+export type CBConnectionActorHandleApiMethod = (typeof ICB_CONNECTION_API_METHODS)[number];
 
 export type RealCommandFixtures = {
   mod: string;
@@ -122,8 +118,8 @@ export function makeRealCommandFixtures(): RealCommandFixtures {
 export type RealCommandStep = {
   label: string;
   coversIpc: CBIpcMethod[];
-  coversApi: ICBConnectionApiMethod[];
-  run( run: RunCommand, server: RunningServer, connection: ICBConnection, fixtures: RealCommandFixtures, ctx: { notifClientId: string } ): Promise<void>;
+  coversApi: CBConnectionActorHandleApiMethod[];
+  run( run: RunCommand, server: RunningServer, connection: CBConnectionActorHandle, fixtures: RealCommandFixtures, ctx: { notifClientId: string } ): Promise<void>;
 };
 
 export function allIpcMethodsExceptStop(): CBIpcMethod[] {
@@ -138,7 +134,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [],
       coversApi: ["getConnectionId"],
       async run(_run, _server, connection) {
-        const id = await runTimed("getConnectionId", () => connection.getConnectionId(), MS.identity);
+        const id = await runTimed("getConnectionId", () => connection.call.getConnectionId(), MS.identity);
         expect(id).to.match(/^conn-\d+$/);
       },
     },
@@ -147,8 +143,8 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [],
       coversApi: ["getClientId"],
       async run(_run, _server, connection, _fixtures, ctx) {
-        ctx.notifClientId = await runTimed("getNotificationClientId", () => connection.getNotificationClientId(), MS.identity,);
-        const cmdId = await runTimed("getClientId", () => connection.getClientId(), MS.identity);
+        ctx.notifClientId = await runTimed("getNotificationClientId", () => connection.call.getNotificationClientId(), MS.identity,);
+        const cmdId = await runTimed("getClientId", () => connection.call.getClientId(), MS.identity);
         expect(cmdId).to.be.a("string").with.length.greaterThan(0);
         expect(ctx.notifClientId).to.be.a("string").with.length.greaterThan(0);
         expect(ctx.notifClientId).to.not.equal(cmdId);
@@ -159,7 +155,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [],
       coversApi: ["getNotificationClientId"],
       async run(_run, _server, connection, _fixtures, ctx) {
-        expect(await runTimed("getNotificationClientId-repeat", () => connection.getNotificationClientId(), MS.identity),).to.equal(ctx.notifClientId);
+        expect(await runTimed("getNotificationClientId-repeat", () => connection.call.getNotificationClientId(), MS.identity),).to.equal(ctx.notifClientId);
       },
     },
 
@@ -169,7 +165,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.GET_MODULE_PATH],
       coversApi: ["pwd"],
       async run(run, server, connection) {
-        await run(server, connection, "pwd-initial", () => connection.pwd());
+        await run(server, connection, "pwd-initial", () => waitCommand(connection.call.pwd()));
       },
     },
     {
@@ -177,7 +173,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.TELL],
       coversApi: ["mkdir"],
       async run(run, server, connection, fixtures) {
-        await run(server, connection, "mkdir", () => connection.mkdir(fixtures.mod));
+        await run(server, connection, "mkdir", () => waitCommand(connection.call.mkdir(fixtures.mod)));
       },
     },
     {
@@ -185,7 +181,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.SET_MODULE_CONTEXT],
       coversApi: ["cd"],
       async run(run, server, connection, fixtures) {
-        await run(server, connection, "cd", () => connection.cd(fixtures.mod));
+        await run(server, connection, "cd", () => waitCommand(connection.call.cd(fixtures.mod)));
       },
     },
     {
@@ -193,7 +189,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.GET_MODULE_PATH],
       coversApi: ["pwd"],
       async run(run, server, connection) {
-        await run(server, connection, "pwd-after-cd", () => connection.pwd());
+        await run(server, connection, "pwd-after-cd", () => waitCommand(connection.call.pwd()));
       },
     },
     {
@@ -201,7 +197,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.GET_MODULE_CONTEXT],
       coversApi: ["cd"],
       async run(run, server, connection) {
-        await run(server, connection, "get-module-context", () => connection.cd());
+        await run(server, connection, "get-module-context", () => waitCommand(connection.call.cd()));
       },
     },
 
@@ -212,7 +208,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversApi: ["tellModel"],
       async run(run, server, connection, fixtures) {
         await runTimed("write-sml-model", () => fs.writeFile(`${fixtures.smlBase}.sml`, `${fixtures.smlModel}\n`, "utf8"), MS.step,);
-        await run(server, connection, "tellModel", () => connection.tellModel(fixtures.smlBase));
+        await run(server, connection, "tellModel", () => waitCommand(connection.call.tellModel(fixtures.smlBase)));
       },
     },
     {
@@ -220,7 +216,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.TELL],
       coversApi: ["tell"],
       async run(run, server, connection, fixtures) {
-        await run(server, connection, "tell-bill", () => connection.tell(fixtures.framesBill));
+        await run(server, connection, "tell-bill", () => waitCommand(connection.call.tell(fixtures.framesBill)));
       },
     },
     {
@@ -228,7 +224,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.TELL],
       coversApi: ["tell"],
       async run(run, server, connection, fixtures) {
-        await run(server, connection, "tell-bill-name", () => connection.tell(fixtures.framesBillName));
+        await run(server, connection, "tell-bill-name", () => waitCommand(connection.call.tell(fixtures.framesBillName)));
       },
     },
     {
@@ -236,7 +232,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.TELL],
       coversApi: ["tell"],
       async run(run, server, connection, fixtures) {
-        await run(server, connection, "tell-mary", () => connection.tell(fixtures.framesMary));
+        await run(server, connection, "tell-mary", () => waitCommand(connection.call.tell(fixtures.framesMary)));
       },
     },
     {
@@ -245,7 +241,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversApi: ["tell"],
       async run(run, server, connection, fixtures) {
         const combined = `${fixtures.framesBillName}{---}${fixtures.framesQuery}`;
-        const answer = await run(server, connection, "tell-transactions", () => connection.tell(combined));
+        const answer = await run(server, connection, "tell-transactions", () => waitCommand(connection.call.tell(combined)));
         expect(answer.ok, `tell {---} completion=${answer.completion}`).to.equal(true);
       },
     },
@@ -254,7 +250,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.TELL],
       coversApi: ["tell"],
       async run(run, server, connection, fixtures) {
-        await run(server, connection, "tell-query", () => connection.tell(fixtures.framesQuery));
+        await run(server, connection, "tell-query", () => waitCommand(connection.call.tell(fixtures.framesQuery)));
       },
     },
 
@@ -264,7 +260,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["who"],
       async run(run, server, connection) {
-        await run(server, connection, "who", () => connection.who());
+        await run(server, connection, "who", () => waitCommand(connection.call.who()));
       },
     },
     {
@@ -272,7 +268,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["sub"],
       async run(run, server, connection) {
-        await run(server, connection, "sub", () => connection.sub());
+        await run(server, connection, "sub", () => waitCommand(connection.call.sub()));
       },
     },
     {
@@ -280,7 +276,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["lm"],
       async run(run, server, connection, fixtures) {
-        await run(server, connection, "lm", () => connection.lm(fixtures.mod));
+        await run(server, connection, "lm", () => waitCommand(connection.call.lm(fixtures.mod)));
       },
     },
     {
@@ -288,7 +284,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["lm"],
       async run(run, server, connection) {
-        await run(server, connection, "lm-current", () => connection.lm());
+        await run(server, connection, "lm-current", () => waitCommand(connection.call.lm()));
       },
     },
     {
@@ -296,7 +292,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["ls"],
       async run(run, server, connection) {
-        await run(server, connection, "ls", () => connection.ls("Employee"));
+        await run(server, connection, "ls", () => waitCommand(connection.call.ls("Employee")));
       },
     },
     {
@@ -304,7 +300,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["ls"],
       async run(run, server, connection) {
-        await run(server, connection, "ls-all", () => connection.ls());
+        await run(server, connection, "ls-all", () => waitCommand(connection.call.ls()));
       },
     },
 
@@ -314,7 +310,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["ask"],
       async run(run, server, connection) {
-        const answer = await run( server, connection, "ask-exists-bill", () => connection.ask("exists[bill/objname]", "OBJNAMES", "default", "Now"), );
+        const answer = await run( server, connection, "ask-exists-bill", () => waitCommand(connection.call.ask("exists[bill/objname]", "OBJNAMES", "default", "Now")), );
         expect(answer.result).to.equal("yes");
       },
     },
@@ -323,7 +319,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["ask"],
       async run(run, server, connection) {
-        await run( server, connection, "ask-unnamed", () => connection.ask("UnnamedEmployee", "OBJNAMES", "LABEL", "Now"), );
+        await run( server, connection, "ask-unnamed", () => waitCommand(connection.call.ask("UnnamedEmployee", "OBJNAMES", "LABEL", "Now")), );
       },
     },
     {
@@ -331,7 +327,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["ask"],
       async run(run, server, connection) {
-        await run( server, connection, "ask-get-object", () => connection.ask("get_object[bill/objname]", "OBJNAMES", "FRAME", "Now"), );
+        await run( server, connection, "ask-get-object", () => waitCommand(connection.call.ask("get_object[bill/objname]", "OBJNAMES", "FRAME", "Now")), );
       },
     },
     {
@@ -339,7 +335,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["ask"],
       async run(run, server, connection, fixtures) {
-        await run( server, connection, "ask-frames-query", () => connection.ask(fixtures.framesQuery, "FRAMES", "LABEL", "Now"), );
+        await run( server, connection, "ask-frames-query", () => waitCommand(connection.call.ask(fixtures.framesQuery, "FRAMES", "LABEL", "Now")), );
       },
     },
     {
@@ -347,7 +343,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["show"],
       async run(run, server, connection) {
-        await run(server, connection, "show", () => connection.show("bill"));
+        await run(server, connection, "show", () => waitCommand(connection.call.show("bill")));
       },
     },
 
@@ -357,7 +353,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.HYPO_ASK],
       coversApi: ["hypoAsk"],
       async run(run, server, connection, fixtures) {
-        await run( server, connection, "hypoAsk", () => connection.hypoAsk(fixtures.framesBill, "UnnamedEmployee", "OBJNAMES", "LABEL", "Now"), );
+        await run( server, connection, "hypoAsk", () => waitCommand(connection.call.hypoAsk(fixtures.framesBill, "UnnamedEmployee", "OBJNAMES", "LABEL", "Now")), );
       },
     },
     {
@@ -365,7 +361,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.HYPO_ASK],
       coversApi: ["hypoAsk"],
       async run(run, server, connection, fixtures) {
-        await run( server, connection, "hypoAsk-frames", () => connection.hypoAsk(fixtures.framesMary, fixtures.hypoFrameQuery, "FRAMES", "LABEL", "Now"), );
+        await run( server, connection, "hypoAsk-frames", () => waitCommand(connection.call.hypoAsk(fixtures.framesMary, fixtures.hypoFrameQuery, "FRAMES", "LABEL", "Now")), );
       },
     },
 
@@ -376,7 +372,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversApi: ["retell"],
       async run(run, server, connection, fixtures) {
         const retellMary = "mary2 in Employee end";
-        await run( server, connection, "retell-mary", () => connection.retell(fixtures.framesMary, retellMary), );
+        await run( server, connection, "retell-mary", () => waitCommand(connection.call.retell(fixtures.framesMary, retellMary)), );
       },
     },
     {
@@ -384,7 +380,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.UNTELL],
       coversApi: ["untell"],
       async run(run, server, connection) {
-        await run( server, connection, "untell-mary2", () => connection.untell("mary2 in Employee end"), );
+        await run( server, connection, "untell-mary2", () => waitCommand(connection.call.untell("mary2 in Employee end")), );
       },
     },
 
@@ -394,7 +390,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.REPORT_CLIENTS],
       coversApi: ["reportClients"],
       async run(run, server, connection) {
-        await run(server, connection, "reportClients", () => connection.reportClients());
+        await run(server, connection, "reportClients", () => waitCommand(connection.call.reportClients()));
       },
     },
 
@@ -404,7 +400,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.NEXT_MESSAGE],
       coversApi: ["nextMessage"],
       async run(run, server, connection) {
-        const next = await run( server, connection, "nextMessage-empty", () => connection.nextMessage("empty"), );
+        const next = await run( server, connection, "nextMessage-empty", () => waitCommand(connection.call.nextMessage("empty")), );
         expect(next.result === "empty_queue" || next.completion === "not_handled", `nextMessage(empty) result=${next.result} completion=${next.completion}`,).to.equal(true);
       },
     },
@@ -416,7 +412,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversApi: ["prolog"],
       async run(run, server, connection) {
         // CBShell.java: LPIcall("PROLOG_CALL," + goal)
-        const answer = await run(server, connection, "prolog-true", () => connection.prolog("true"));
+        const answer = await run(server, connection, "prolog-true", () => waitCommand(connection.call.prolog("true")));
         expect(answer.result).to.equal("true");
       },
     },
@@ -427,7 +423,7 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       async run(run, server, connection, fixtures) {
         // LocalCBclient.LPIcall sends raw LPI_CALL; PROLOG_CALL wrapper required for goals (CBShell.java)
         const goal = javaPrologLpiGoal("getModulePath(_R)");
-        const answer = await run(server, connection, "lpicall-getModulePath", () => connection.lpicall(goal));
+        const answer = await run(server, connection, "lpicall-getModulePath", () => waitCommand(connection.call.lpicall(goal)));
         expect(answer.result, `${JAVA_ORACLE.lpiCall} getModulePath in ${fixtures.mod}`).to.include(fixtures.mod);
       },
     },
@@ -437,18 +433,18 @@ export function buildRealCommandSteps(): RealCommandStep[] {
       coversApi: ["why"],
       async run(run, server, connection) {
         // LocalCBclient.getErrorMessages → nextMessage("ERROR_REPORT") until empty_queue
-        const why = await run(server, connection, "why", () => connection.why());
+        const why = await run(server, connection, "why", () => waitCommand(connection.call.why()));
         expect(why.result === "empty_queue" || why.completion === "ok", `${JAVA_ORACLE.why} result=${why.result} completion=${why.completion}`,).to.equal(true);
       },
     },
   ];
 }
 
-export async function runAllRealCommandSteps( run: RunCommand, server: RunningServer, connection: ICBConnection ): Promise<{ ipcCovered: Set<CBIpcMethod>; apiCovered: Set<ICBConnectionApiMethod> }> {
+export async function runAllRealCommandSteps( run: RunCommand, server: RunningServer, connection: CBConnectionActorHandle ): Promise<{ ipcCovered: Set<CBIpcMethod>; apiCovered: Set<CBConnectionActorHandleApiMethod> }> {
   const fixtures = makeRealCommandFixtures();
   const ctx = { notifClientId: "" };
   const ipcCovered = new Set<CBIpcMethod>([CB_IPC_METHODS.ENROLL_ME]);
-  const apiCovered = new Set<ICBConnectionApiMethod>();
+  const apiCovered = new Set<CBConnectionActorHandleApiMethod>();
 
   for (const step of buildRealCommandSteps()) {
     await step.run(run, server, connection, fixtures, ctx);
@@ -491,27 +487,27 @@ export function bootstrapLevelForCommandStep(label: string): RealCommandBootstra
 }
 
 /** Minimal fixture state before an isolated command-step real test. */
-export async function bootstrapRealCommandSession( run: RunCommand, server: RunningServer, connection: ICBConnection, fixtures: RealCommandFixtures, level: RealCommandBootstrap ): Promise<{ notifClientId: string }> {
-  const ctx = { notifClientId: await runTimed("bootstrap-notif-id", () => connection.getNotificationClientId(), MS.identity) };
+export async function bootstrapRealCommandSession( run: RunCommand, server: RunningServer, connection: CBConnectionActorHandle, fixtures: RealCommandFixtures, level: RealCommandBootstrap ): Promise<{ notifClientId: string }> {
+  const ctx = { notifClientId: await runTimed("bootstrap-notif-id", () => connection.call.getNotificationClientId(), MS.identity) };
   if (level === "none") {
     return ctx;
   }
-  await run(server, connection, "bootstrap-mkdir", () => connection.mkdir(fixtures.mod));
-  await run(server, connection, "bootstrap-cd", () => connection.cd(fixtures.mod));
+  await run(server, connection, "bootstrap-mkdir", () => waitCommand(connection.call.mkdir(fixtures.mod)));
+  await run(server, connection, "bootstrap-cd", () => waitCommand(connection.call.cd(fixtures.mod)));
   if (level === "module") {
     return ctx;
   }
   await runTimed("bootstrap-write-sml", () => fs.writeFile(`${fixtures.smlBase}.sml`, `${fixtures.smlModel}\n`, "utf8"), MS.step,);
-  await run(server, connection, "bootstrap-tellModel", () => connection.tellModel(fixtures.smlBase));
+  await run(server, connection, "bootstrap-tellModel", () => waitCommand(connection.call.tellModel(fixtures.smlBase)));
   if (level === "schema") {
     return ctx;
   }
-  await run(server, connection, "bootstrap-tell-bill", () => connection.tell(fixtures.framesBill));
-  await run(server, connection, "bootstrap-tell-bill-name", () => connection.tell(fixtures.framesBillName));
-  await run(server, connection, "bootstrap-tell-mary", () => connection.tell(fixtures.framesMary));
-  await run(server, connection, "bootstrap-tell-query", () => connection.tell(fixtures.framesQuery));
+  await run(server, connection, "bootstrap-tell-bill", () => waitCommand(connection.call.tell(fixtures.framesBill)));
+  await run(server, connection, "bootstrap-tell-bill-name", () => waitCommand(connection.call.tell(fixtures.framesBillName)));
+  await run(server, connection, "bootstrap-tell-mary", () => waitCommand(connection.call.tell(fixtures.framesMary)));
+  await run(server, connection, "bootstrap-tell-query", () => waitCommand(connection.call.tell(fixtures.framesQuery)));
   if (level === "retold") {
-    await run( server, connection, "bootstrap-retell-mary", () => connection.retell(fixtures.framesMary, "mary2 in Employee end"), );
+    await run( server, connection, "bootstrap-retell-mary", () => waitCommand(connection.call.retell(fixtures.framesMary, "mary2 in Employee end")), );
   }
   return ctx;
 }
@@ -530,30 +526,30 @@ export function bootstrapLevelForNotificationStep(label: string): RealNotificati
   return "empview";
 }
 
-export async function bootstrapNotificationSession( run: RunCommand, server: RunningServer, connection: ICBConnection, fixtures: RealCommandFixtures, level: RealNotificationBootstrap ): Promise<{ notifClientId: string }> {
-  const ctx = { notifClientId: await runTimed("bootstrap-notif-id", () => connection.getNotificationClientId(), MS.identity) };
-  await run(server, connection, "bootstrap-mkdir", () => connection.mkdir(fixtures.mod));
-  await run(server, connection, "bootstrap-cd", () => connection.cd(fixtures.mod));
+export async function bootstrapNotificationSession( run: RunCommand, server: RunningServer, connection: CBConnectionActorHandle, fixtures: RealCommandFixtures, level: RealNotificationBootstrap ): Promise<{ notifClientId: string }> {
+  const ctx = { notifClientId: await runTimed("bootstrap-notif-id", () => connection.call.getNotificationClientId(), MS.identity) };
+  await run(server, connection, "bootstrap-mkdir", () => waitCommand(connection.call.mkdir(fixtures.mod)));
+  await run(server, connection, "bootstrap-cd", () => waitCommand(connection.call.cd(fixtures.mod)));
   await runTimed("bootstrap-write-sml", () => fs.writeFile(`${fixtures.smlBase}.sml`, `${fixtures.smlModel}\n`, "utf8"), MS.step,);
-  await run(server, connection, "bootstrap-tellModel", () => connection.tellModel(fixtures.smlBase));
-  await run(server, connection, "bootstrap-tell-bill", () => connection.tell(fixtures.framesBill));
+  await run(server, connection, "bootstrap-tellModel", () => waitCommand(connection.call.tellModel(fixtures.smlBase)));
+  await run(server, connection, "bootstrap-tell-bill", () => waitCommand(connection.call.tell(fixtures.framesBill)));
   if (level === "empview" || level === "registered") {
-    await run(server, connection, "bootstrap-tell-empview", () => connection.tell(fixtures.framesEmpView));
-    await run( server, connection, "bootstrap-tell-empview-naive-vm", () => connection.tell(fixtures.framesEmpViewNaiveVm), );
-    await run( server, connection, "bootstrap-ask-empview", () => connection.ask("EmpView", "OBJNAMES", "LABEL", "Now"), );
+    await run(server, connection, "bootstrap-tell-empview", () => waitCommand(connection.call.tell(fixtures.framesEmpView)));
+    await run( server, connection, "bootstrap-tell-empview-naive-vm", () => waitCommand(connection.call.tell(fixtures.framesEmpViewNaiveVm)), );
+    await run( server, connection, "bootstrap-ask-empview", () => waitCommand(connection.call.ask("EmpView", "OBJNAMES", "LABEL", "Now")), );
   }
   if (level === "registered") {
-    await run( server, connection, "bootstrap-notification-request", () => connection.notificationRequest(javaViewNotificationAbout("EmpView"), ctx.notifClientId), );
+    await run( server, connection, "bootstrap-notification-request", () => waitCommand(connection.call.notificationRequest(javaViewNotificationAbout("EmpView"), ctx.notifClientId)), );
   }
   return ctx;
 }
 
-export function assertFullCommandCoverage( ipcCovered: Set<CBIpcMethod>, apiCovered: Set<ICBConnectionApiMethod> ): void {
+export function assertFullCommandCoverage( ipcCovered: Set<CBIpcMethod>, apiCovered: Set<CBConnectionActorHandleApiMethod> ): void {
   for (const method of allIpcMethodsExceptStop()) {
     expect(ipcCovered.has(method), `missing IPC coverage: ${method}`).to.equal(true);
   }
   for (const method of ICB_CONNECTION_API_METHODS) {
-    expect(apiCovered.has(method), `missing ICBConnection API coverage: ${method}`).to.equal(true);
+    expect(apiCovered.has(method), `missing CBConnectionActorHandle API coverage: ${method}`).to.equal(true);
   }
 }
 
@@ -564,7 +560,7 @@ export function buildNotificationCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.TELL],
       coversApi: ["tell"],
       async run(run, server, connection, fixtures) {
-        await run(server, connection, "tell-empview", () => connection.tell(fixtures.framesEmpView));
+        await run(server, connection, "tell-empview", () => waitCommand(connection.call.tell(fixtures.framesEmpView)));
       },
     },
     {
@@ -572,7 +568,7 @@ export function buildNotificationCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.TELL],
       coversApi: ["tell"],
       async run(run, server, connection, fixtures) {
-        await run( server, connection, "tell-empview-naive-vm", () => connection.tell(fixtures.framesEmpViewNaiveVm), );
+        await run( server, connection, "tell-empview-naive-vm", () => waitCommand(connection.call.tell(fixtures.framesEmpViewNaiveVm)), );
       },
     },
     {
@@ -580,7 +576,7 @@ export function buildNotificationCommandSteps(): RealCommandStep[] {
       coversIpc: [CB_IPC_METHODS.ASK],
       coversApi: ["ask"],
       async run(run, server, connection) {
-        await run( server, connection, "ask-empview", () => connection.ask("EmpView", "OBJNAMES", "LABEL", "Now"), );
+        await run( server, connection, "ask-empview", () => waitCommand(connection.call.ask("EmpView", "OBJNAMES", "LABEL", "Now")), );
       },
     },
     {
@@ -592,7 +588,7 @@ export function buildNotificationCommandSteps(): RealCommandStep[] {
         // The command channel targets the *notification* client id (dual-channel parity with Java).
         // Requires the server started with `-v on` (view-maintenance rules); see realHarness.
         const about = javaViewNotificationAbout("EmpView");
-        await run( server, connection, "notificationRequest", () => connection.notificationRequest(about, ctx.notifClientId), );
+        await run( server, connection, "notificationRequest", () => waitCommand(connection.call.notificationRequest(about, ctx.notifClientId)), );
       },
     },
     {
@@ -603,7 +599,7 @@ export function buildNotificationCommandSteps(): RealCommandStep[] {
         // CBConnection.stopNotifyingAbout → notificationRequest(delete(view(...))). Retracts the
         // subscription registered in the "registered" bootstrap and returns ok.
         const about = javaDeleteNotificationAbout(javaViewNotificationAbout("EmpView"));
-        await run( server, connection, "notificationRequest-delete", () => connection.notificationRequest(about, ctx.notifClientId), );
+        await run( server, connection, "notificationRequest-delete", () => waitCommand(connection.call.notificationRequest(about, ctx.notifClientId)), );
       },
     },
     {
@@ -613,14 +609,14 @@ export function buildNotificationCommandSteps(): RealCommandStep[] {
       async run(_run, _server, connection) {
         // The "registered" bootstrap already issued a NOTIFICATION_REQUEST, so the server
         // pushed the initial view answer onto the notification channel. Pull it here.
-        const notifMsg = await runTimed("getNotificationMessage", () => connection.getNotificationMessage(2_000), MS.cmd,);
+        const notifMsg = await runTimed("getNotificationMessage", () => waitCommand(connection.call.getNotificationMessage(2_000)), MS.cmd,);
         expect(notifMsg.completion, `${JAVA_ORACLE.getNotificationMessage} completion=${notifMsg.completion} result=${notifMsg.result}`,).to.equal("notification");
       },
     },
   ];
 }
 
-export async function runNotificationCommandSteps( run: RunCommand, server: RunningServer, connection: ICBConnection, fixtures: RealCommandFixtures, ctx: { notifClientId: string } ): Promise<void> {
+export async function runNotificationCommandSteps( run: RunCommand, server: RunningServer, connection: CBConnectionActorHandle, fixtures: RealCommandFixtures, ctx: { notifClientId: string } ): Promise<void> {
   for (const step of buildNotificationCommandSteps()) {
     await step.run(run, server, connection, fixtures, ctx);
   }

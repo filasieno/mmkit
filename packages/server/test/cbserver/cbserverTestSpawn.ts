@@ -1,5 +1,11 @@
 import * as ihsm from "ihsm/testing";
 import { CbActorSpawnOptions } from "../../src/cbserver/shared/cbActorSpawnOptions";
+// Register state classes (decorator side effects) for isolated test spawns.
+import "../../src/cbserver/actors/connection/CBServerConnectionActor";
+import "../../src/cbserver/actors/commandChannel/CBCommandChannelActor";
+import "../../src/cbserver/actors/notificationChannel/CBNotificationChannelActor";
+import "../../src/cbserver/actors/reader/CBConnectionReaderActor";
+import "../../src/cbserver/actors/writer/CBConnectionWriterActor";
 import type { CBServerActorRef, LogReaderChildren } from "../../src/cbserver/actors/server/CBServerConfig";
 import { StdoutLogReaderTop } from "../../src/cbserver/actors/stdoutLogReader/CBServerStdoutLogReaderActor";
 import { StdoutLogReaderContext } from "../../src/cbserver/actors/stdoutLogReader/CBServerStdoutLogReaderContext";
@@ -26,11 +32,9 @@ const testSpawnOptions = new CbActorSpawnOptions();
 export async function testSpawnLogReaderChildren(server: CBServerActorRef): Promise<LogReaderChildren> {
   const stdoutLogReader = ihsm.makeTestActor(StdoutLogReaderTop, new StdoutLogReaderContext(server), undefined, testSpawnOptions,);
   await stdoutLogReader.hsm.sync();
-  await stdoutLogReader.call.initialize();
 
   const stderrLogReader = ihsm.makeTestActor(StderrLogReaderTop, new StderrReaderContext(server), undefined, testSpawnOptions,);
   await stderrLogReader.hsm.sync();
-  await stderrLogReader.call.initialize();
 
   return { stdoutLogReader, stderrLogReader } as LogReaderChildren;
 }
@@ -38,21 +42,18 @@ export async function testSpawnLogReaderChildren(server: CBServerActorRef): Prom
 export async function testSpawnConnectionChild( context: CBConnectionContext, orchestratorPort: CBConnectionOrchestratorPort ): Promise<CBConnectionActor> {
   const child = ihsm.makeTestActor(CBConnectionTop, context, orchestratorPort, testSpawnOptions);
   await child.hsm.sync();
-  await child.call.initialize();
   return child as CBConnectionActor;
 }
 
 export async function testSpawnCommandChannel( ctx: ICBCommandChannelContext, channelPort: CBCommandChannelPortInput ): Promise<CBCommandChannelActor> {
   const child = ihsm.makeTestActor(CBCommandChannelTop, ctx, channelPort, testSpawnOptions);
   await child.hsm.sync();
-  await child.call.initialize();
   return child as CBCommandChannelActor;
 }
 
 export async function testSpawnNotificationChannel( ctx: ICBNotificationChannelContext, channelPort: CBNotificationChannelPortInput ): Promise<CBNotificationChannelActor> {
   const child = ihsm.makeTestActor(CBNotificationChannelTop, ctx, channelPort, testSpawnOptions);
   await child.hsm.sync();
-  await child.call.initialize();
   return child as CBNotificationChannelActor;
 }
 
@@ -61,8 +62,6 @@ export async function testSpawnCommandChannelTcpChildren( channel: CBCommandChan
   const writer = ihsm.makeTestActor(CBConnectionWriterTop, new CBConnectionWriterContext(channel), new CBConnectionWriterPort(channelPort), testSpawnOptions,);
   await reader.hsm.sync();
   await writer.hsm.sync();
-  await reader.call.initialize();
-  await writer.call.initialize();
   return { reader, writer };
 }
 
@@ -71,7 +70,5 @@ export async function testSpawnNotificationChannelTcpChildren( channel: CBNotifi
   const writer = ihsm.makeTestActor(CBConnectionWriterTop, new CBConnectionWriterContext(channel), new CBConnectionWriterPort(channelPort), testSpawnOptions,);
   await reader.hsm.sync();
   await writer.hsm.sync();
-  await reader.call.initialize();
-  await writer.call.initialize();
   return { reader, writer };
 }

@@ -14,15 +14,18 @@ import * as self from "./CBConnectionReaderActor";
  *
  * ```text
  * CBConnectionReaderTop
- * * ReaderUninitialized
- * - ReaderInitialized
+ * * ReaderInitialized
  *   * ReaderIdle
  *   - ReaderAwaiting
  *   - ReaderIgnored
  *     - ReaderStopped
  * ```
+ *
+ * Handler matrix: `docs/cbserver-actor-handler-matrix.md` § CBConnectionReaderTop.
+ * Invariant predicates: {@link CBConnectionReaderInvariants}.
  */
 
+@ihsm.InitialState
 export class ReaderInitialized extends CBConnectionReaderTop {
   protected override _checkInvariant(): void {
     // Parent connection may forward socket bytes or interrupt.
@@ -37,25 +40,6 @@ export class ReaderInitialized extends CBConnectionReaderTop {
     this._checkInvariant();
     this.ctx.interrupt();
     this.hsm.transition(ReaderStopped);
-  }
-}
-
-@ihsm.InitialState
-export class ReaderUninitialized extends CBConnectionReaderTop {
-  protected override _checkInvariant(): void {
-    // Constructed; initialize() not yet called.
-    inv.assertReaderUninitialized(this.ctx);
-  }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.hsm.transition(ReaderInitialized);
-  }
-
-  interrupt(): void {
-    this._checkInvariant();
-    this.ctx.interrupt();
-    this.ctx.postInterrupted();
   }
 }
 

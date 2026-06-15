@@ -7,7 +7,6 @@ export interface StderrLogReaderNotifications {
 }
 
 export interface StderrLogReaderServices {
-  initialize(): Promise<void>;
   getCurrentStateName(): Promise<string>;
 }
 

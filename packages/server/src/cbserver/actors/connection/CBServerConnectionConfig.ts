@@ -4,44 +4,46 @@ import type { ICBCommandChannelContext } from "../commandChannel/CBCommandChanne
 import type { ICBNotificationChannelContext } from "../notificationChannel/CBNotificationChannelContext";
 import type { CBCommandChannelPortInput, CBCommandChannelActor } from "../commandChannel/CBCommandChannelConfig";
 import type { CBNotificationChannelPortInput, CBNotificationChannelActor } from "../notificationChannel/CBNotificationChannelConfig";
+import type { CBCommandRequest } from "./CBCommandRequest";
 
 export interface CBConnectionServices {
-  initialize(): Promise<void>;
   getConnectionId(): Promise<string>;
   getClientId(): Promise<string>;
   getNotificationClientId(): Promise<string>;
+  tell(frames: string): Promise<CBCommandRequest>;
+  untell(frames: string): Promise<CBCommandRequest>;
+  retell(untellFrames: string, tellFrames: string): Promise<CBCommandRequest>;
+  tellModel(...files: string[]): Promise<CBCommandRequest>;
+  ask(query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): Promise<CBCommandRequest>;
+  hypoAsk(frames: string, query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): Promise<CBCommandRequest>;
+  lpicall(lpiCall: string): Promise<CBCommandRequest>;
+  prolog(statement: string): Promise<CBCommandRequest>;
+  why(): Promise<CBCommandRequest>;
+  cd(modulePath?: string): Promise<CBCommandRequest>;
+  pwd(): Promise<CBCommandRequest>;
+  lm(modulePath?: string): Promise<CBCommandRequest>;
+  ls(className?: string): Promise<CBCommandRequest>;
+  mkdir(moduleName: string): Promise<CBCommandRequest>;
+  who(): Promise<CBCommandRequest>;
+  sub(): Promise<CBCommandRequest>;
+  show(objectName: string): Promise<CBCommandRequest>;
+  nextMessage(messageType?: string): Promise<CBCommandRequest>;
+  stopServer(password?: string): Promise<CBCommandRequest>;
+  reportClients(): Promise<CBCommandRequest>;
+  notificationRequest(about: string, tool?: string): Promise<CBCommandRequest>;
+  getNotificationMessage(timeoutMs?: number): Promise<CBCommandRequest>;
 }
 
 export interface CBConnectionNotifications {
   close(): void;
-  dispatchTell(frames: string): void;
-  dispatchUntell(frames: string): void;
-  dispatchRetell(untellFrames: string, tellFrames: string): void;
-  dispatchTellModel(...files: string[]): void;
-  dispatchAsk(query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): void;
-  dispatchHypoAsk(frames: string, query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): void;
-  dispatchLpicall(lpiCall: string): void;
-  dispatchProlog(statement: string): void;
-  dispatchWhy(): void;
-  dispatchCd(modulePath?: string): void;
-  dispatchPwd(): void;
-  dispatchLm(modulePath?: string): void;
-  dispatchLs(className?: string): void;
-  dispatchMkdir(moduleName: string): void;
-  dispatchWho(): void;
-  dispatchSub(): void;
-  dispatchShow(objectName: string): void;
-  dispatchNextMessage(messageType?: string): void;
-  dispatchStopServer(password?: string): void;
-  dispatchReportClients(): void;
-  dispatchNotificationRequest(about: string, tool?: string): void;
-  dispatchGetNotificationMessage(timeoutMs?: number): void;
 }
 
 export interface CBConnectionInternalNotifications {
   doSpawnChannels(): void;
   doFinalizeClose(): void;
   doBreakTransport(message: string): void;
+  doProcessCommandQueue(): void;
+  doCloseAfterDrain(): void;
   onCommandChannelClosed(): void;
   onNotificationChannelClosed(): void;
   onCommandChannelBroken(message: string): void;

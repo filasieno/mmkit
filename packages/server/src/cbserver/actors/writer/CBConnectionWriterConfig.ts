@@ -6,7 +6,6 @@ export interface CBConnectionWriterNotifications {
 }
 
 export interface CBConnectionWriterServices {
-  initialize(): Promise<void>;
   sendFrame(frame: Buffer): Promise<void>;
 }
 

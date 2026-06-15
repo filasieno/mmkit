@@ -1,27 +1,40 @@
 /**
- * CInterface.typ notification extension — dual-socket pattern from Java CBConnection.
- *
- * Requires a told View object before view(ViewName) NOTIFICATION_REQUEST.
+ * Mock ports — CInterface.typ notification extension (identical to notification.real.test.ts).
  */
 /// <reference types="mocha" />
 import * as fs from "node:fs/promises";
-import { makeRealCommandFixtures, runNotificationCommandSteps, } from "./commandCatalog";
+import { makeRealCommandFixtures, runNotificationCommandSteps } from "./commandCatalog";
 import { waitCommand } from "../../src/cbserver/shared/CBServerDefs";
-import { describeReal, installRealTestGuards, MS, PER_TEST_TIMEOUT_MS, runCommand, runTimed, withRealSession, } from "./realHarness";
+import {
+  installMockTestGuards,
+  MS,
+  PER_TEST_TIMEOUT_MS,
+  runCommand,
+  runTimed,
+  withMockSession,
+} from "./mockHarness";
 
-describeReal("CBServer notification [real cbserver]", function () {
+describe("CBServer notification [mock port]", function () {
   this.timeout(PER_TEST_TIMEOUT_MS);
-  installRealTestGuards(this);
+  installMockTestGuards(this);
 
   it("NOTIFICATION_REQUEST on notification channel client id (Java CBConnection)", async function () {
     const fixtures = makeRealCommandFixtures();
-    await withRealSession("notify", async ({ server, connection }) => {
+    await withMockSession("notify", async ({ server, connection }) => {
       const ctx = {
-        notifClientId: await runTimed("getNotificationClientId", () => connection.call.getNotificationClientId(), MS.identity),
+        notifClientId: await runTimed(
+          "getNotificationClientId",
+          () => connection.call.getNotificationClientId(),
+          MS.identity,
+        ),
       };
       await runCommand(server, connection, "mkdir", () => waitCommand(connection.call.mkdir(fixtures.mod)));
       await runCommand(server, connection, "cd", () => waitCommand(connection.call.cd(fixtures.mod)));
-      await runTimed("write-sml", () => fs.writeFile(`${fixtures.smlBase}.sml`, `${fixtures.smlModel}\n`, "utf8"), MS.step);
+      await runTimed(
+        "write-sml",
+        () => fs.writeFile(`${fixtures.smlBase}.sml`, `${fixtures.smlModel}\n`, "utf8"),
+        MS.step,
+      );
       await runCommand(server, connection, "tellModel", () => waitCommand(connection.call.tellModel(fixtures.smlBase)));
       await runCommand(server, connection, "tell-bill", () => waitCommand(connection.call.tell(fixtures.framesBill)));
       await runNotificationCommandSteps(runCommand, server, connection, fixtures, ctx);

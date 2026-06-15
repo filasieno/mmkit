@@ -6,7 +6,6 @@ import type { CBConnectionWriterActor } from "../writer/CBConnectionWriterConfig
 
 /** Public `call` surface for the command TCP channel actor. */
 export interface CBCommandChannelServices {
-  initialize(): Promise<void>;
   getRawClientId(): Promise<string>;
 }
 

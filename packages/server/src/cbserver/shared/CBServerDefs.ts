@@ -33,34 +33,14 @@ export type ProcessIoListener = (stream: ProcessStream, line: string) => void;
 /** POSIX signal name accepted by `ChildProcess.kill`. */
 export type ProcessSignal = NodeJS.Signals;
 
-export interface ICBConnection {
-  getConnectionId(): Promise<string>;
-  close(): Promise<void>;
-  tell(frames: string): Promise<CBAnswer>;
-  untell(frames: string): Promise<CBAnswer>;
-  retell(untellFrames: string, tellFrames: string): Promise<CBAnswer>;
-  tellModel(...files: string[]): Promise<CBAnswer>;
-  ask(query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): Promise<CBAnswer>;
-  hypoAsk(frames: string, query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): Promise<CBAnswer>;
-  lpicall(lpiCall: string): Promise<CBAnswer>;
-  prolog(statement: string): Promise<CBAnswer>;
-  why(): Promise<CBAnswer>;
-  cd(modulePath?: string): Promise<CBAnswer>;
-  pwd(): Promise<CBAnswer>;
-  lm(modulePath?: string): Promise<CBAnswer>;
-  ls(className?: string): Promise<CBAnswer>;
-  mkdir(moduleName: string): Promise<CBAnswer>;
-  who(): Promise<CBAnswer>;
-  sub(): Promise<CBAnswer>;
-  show(objectName: string): Promise<CBAnswer>;
-  nextMessage(messageType?: string): Promise<CBAnswer>;
-  stopServer(password?: string): Promise<CBAnswer>;
-  reportClients(): Promise<CBAnswer>;
-  notificationRequest(about: string, tool?: string): Promise<CBAnswer>;
-  getNotificationMessage(timeoutMs?: number): Promise<CBAnswer>;
-  getClientId(): Promise<string>;
-  getNotificationClientId(): Promise<string>;
-}
+import type { CBConnectionActorHandle } from "../actors/connection/CBServerConnectionConfig";
+import type { CBCommandRequest } from "../actors/connection/CBCommandRequest";
+import { waitCommand } from "../actors/connection/CBCommandRequest";
+import type { CBServerInitializeRequest } from "../actors/server/CBServerInitializeRequest";
+import { waitInitialize } from "../actors/server/CBServerInitializeRequest";
+
+export type { CBConnectionActorHandle, CBCommandRequest, CBServerInitializeRequest };
+export { waitCommand, waitInitialize };
 
 export interface ICBConnectionOptions {
   label?: string;

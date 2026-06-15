@@ -3,6 +3,7 @@ import type * as ihsm from "ihsm";
 import type { CBServerActorRef, CBServerLastExit, CBServerLogChildren, ICBServerContext, } from "./CBServerConfig";
 import type { CBServerConfig } from "./settings/CBServerSettings";
 import type { CBConnectionActor } from "../connection/CBServerConnectionConfig";
+import { CBServerInitializeSlot, makeServerInitializeRequest, type CBServerInitializeRequest } from "./CBServerInitializeRequest";
 
 /**
  * Mutable domain state for the CBServer supervisor HSM.
@@ -56,6 +57,8 @@ export class CBServerContext implements ICBServerContext {
   tcpPortProbeAttempt = 0;
   tcpPortProbeRetryTimer?: number;
   pendingLogReaderInterrupts = 0;
+  /** Set during the sole `initialize()` call; cleared when {@link Stopped} is entered. */
+  initializeSlot?: CBServerInitializeSlot;
   private connectionSeq = 0;
 
   constructor(config: CBServerConfig) {
@@ -131,5 +134,36 @@ export class CBServerContext implements ICBServerContext {
 
   allInterrupted(): boolean {
     return this.pendingLogReaderInterrupts <= 0;
+  }
+
+  beginInitialize(): CBServerInitializeRequest {
+    if (this.initializeSlot !== undefined) {
+      throw new Error("server initialize already in progress");
+    }
+    const slot = new CBServerInitializeSlot();
+    this.initializeSlot = slot;
+    return makeServerInitializeRequest(slot);
+  }
+
+  noteInitializeProgress(state: string): void {
+    this.initializeSlot?.emitNotification(state);
+  }
+
+  completeInitialize(state: string): void {
+    const slot = this.initializeSlot;
+    if (slot === undefined) {
+      return;
+    }
+    this.initializeSlot = undefined;
+    slot.terminateAnswer(state);
+  }
+
+  failInitialize(error: Error): void {
+    const slot = this.initializeSlot;
+    if (slot === undefined) {
+      return;
+    }
+    this.initializeSlot = undefined;
+    slot.terminateError(error);
   }
 }

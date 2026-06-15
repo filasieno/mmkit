@@ -12,7 +12,7 @@
 
 stdenvNoCC.mkDerivation rec {
   pname = "mmkit";
-  version = "0.2.0";
+  version = "0.0.2";
   inherit src npmDeps;
 
   npmInstallFlags = [ "--include=optional" ];

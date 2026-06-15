@@ -3,14 +3,14 @@ import { CBServerContext } from "./CBServerContext";
 import { CBServerTop } from "./CBServerConfig";
 import type { CBServerActorRef, CBServerLogChildren, CBServerMachinePortInput, CBServerMachineConfig, CBServerPortHandle } from "./CBServerConfig";
 import * as inv from "./CBServerInvariants";
-import type { ICBConnection, ICBConnectionOptions } from "../../shared/CBServerDefs";
-import { CBConnectionHandle } from "../connection/CBConnectionHandle";
+import type { ICBConnectionOptions } from "../../shared/CBServerDefs";
 import { CBConnectionContext, waitForConnectionBootstrap } from "../connection/CBServerConnectionContext";
 import type { CBConnectionActor } from "../connection/CBServerConnectionConfig";
 import { CBConnectionOrchestratorPort } from "../connection/CBConnectionOrchestratorPort";
 import { resolveTcpPortProbeSchedule } from "./tcpPortProbe";
 import type { TcpPortProbeSchedule } from "./tcpPortProbe";
 import { cbTrace } from "../../shared/cbTrace";
+import type { CBServerInitializeRequest } from "./CBServerInitializeRequest";
 import * as self from "./CBServerActor";
 
 /**
@@ -37,6 +37,9 @@ import * as self from "./CBServerActor";
  *
  * Command transport is TCP-only via {@link CBConnectionTop} children.
  * Process stdout/stderr are observed by separate log reader child actors.
+ *
+ * Handler matrix (state × handler × behaviour): `docs/cbserver-actor-handler-matrix.md` § CBServerTop.
+ * Invariant predicates: {@link CBServerInvariants}.
  */
 
 export class Initialized extends CBServerTop {
@@ -74,7 +77,7 @@ export class Initialized extends CBServerTop {
     return this.hsm.currentStateName;
   }
 
-  async createConnection(_options?: ICBConnectionOptions): Promise<ICBConnection> {
+  async createConnection(_options?: ICBConnectionOptions): Promise<CBConnectionActor> {
     this._checkInvariant();
     throw new Error(`illegal state: createConnection is not allowed in ${this.hsm.currentStateName}`);
   }
@@ -186,10 +189,14 @@ export class Uninitialized extends CBServerTop {
     inv.assertUninitializedInstance(this.ctx);
   }
 
-  async initialize(): Promise<void> {
+  async initialize(): Promise<CBServerInitializeRequest> {
     this._checkInvariant();
+    const request = this.ctx.beginInitialize();
+    this.ctx.noteInitializeProgress(this.hsm.currentStateName);
     this.ctx.serverMailbox = (this.hsm.port as unknown as CBServerPortHandle).actor;
+    this.ctx.noteInitializeProgress("Initialized");
     this.hsm.transition(Initialized);
+    return request;
   }
 }
 
@@ -207,6 +214,8 @@ export class Stopped extends ProcessDetached {
     this.ctx.resetIdle();
     this.ctx.statusEvents.emit("status", this.hsm.currentStateName);
     inv.assertStopped(this.ctx);
+    this.ctx.noteInitializeProgress(this.hsm.currentStateName);
+    this.ctx.completeInitialize(this.hsm.currentStateName);
   }
 
   start(): void {
@@ -643,7 +652,7 @@ export class Running extends ProcessActive {
     inv.assertRunning(this.ctx);
   }
 
-  async createConnection(options?: ICBConnectionOptions): Promise<ICBConnection> {
+  async createConnection(options?: ICBConnectionOptions): Promise<CBConnectionActor> {
     this._checkInvariant();
     const tcpPort: number = this.ctx.config.network.port;
     if (tcpPort <= 0) {
@@ -664,7 +673,7 @@ export class Running extends ProcessActive {
     const child: CBConnectionActor = await this.hsm.port.spawnConnection(this.ctx.serverMailbox!, context, orchestratorPort);
     await bootstrap;
     this.ctx.registerConnection(connectionId, child);
-    return new CBConnectionHandle(child, context);
+    return child;
   }
 }
 

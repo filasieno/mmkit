@@ -12,15 +12,18 @@ import * as self from "./CBConnectionWriterActor";
  *
  * ```text
  * CBConnectionWriterTop
- * * WriterUninitialized
- * - WriterInitialized
+ * * WriterInitialized
  *   * WriterIdle
  *   - WriterSending
  *   - WriterIgnored
  *     - WriterStopped
  * ```
+ *
+ * Handler matrix: `docs/cbserver-actor-handler-matrix.md` § CBConnectionWriterTop.
+ * Invariant predicates: {@link CBConnectionWriterInvariants}.
  */
 
+@ihsm.InitialState
 export class WriterInitialized extends CBConnectionWriterTop {
   protected override _checkInvariant(): void {
     // Parent connection may post sendFrame or interrupt.
@@ -35,25 +38,6 @@ export class WriterInitialized extends CBConnectionWriterTop {
     this._checkInvariant();
     this.ctx.interrupt();
     this.hsm.transition(WriterStopped);
-  }
-}
-
-@ihsm.InitialState
-export class WriterUninitialized extends CBConnectionWriterTop {
-  protected override _checkInvariant(): void {
-    // Constructed; initialize() not yet called.
-    inv.assertWriterUninitialized(this.ctx);
-  }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.hsm.transition(WriterInitialized);
-  }
-
-  interrupt(): void {
-    this._checkInvariant();
-    this.ctx.interrupt();
-    this.ctx.postInterrupted();
   }
 }
 

@@ -15,14 +15,12 @@ export class CBConnectionOrchestratorPort extends ihsm.Port<typeof CBConnectionT
   async spawnCommandChannel( parent: ihsm.ParentActor<typeof CBConnectionTop>, ctx: ICBCommandChannelContext, channelPort: CBCommandChannelPortInput ): Promise<CBCommandChannelActor> {
     const child: CBCommandChannelActor = ihsm.makeChildActor(parent, CBCommandChannelTop, ctx, channelPort, new CbActorSpawnOptions(),);
     await child.hsm.sync();
-    await child.call.initialize();
     return child;
   }
 
   async spawnNotificationChannel( parent: ihsm.ParentActor<typeof CBConnectionTop>, ctx: ICBNotificationChannelContext, channelPort: CBNotificationChannelPortInput ): Promise<CBNotificationChannelActor> {
     const child: CBNotificationChannelActor = ihsm.makeChildActor(parent, CBNotificationChannelTop, ctx, channelPort, new CbActorSpawnOptions(),);
     await child.hsm.sync();
-    await child.call.initialize();
     return child;
   }
 }

@@ -27,8 +27,6 @@ export class CBCommandChannelPort extends CBTcpChannelPortBase<typeof CBCommandC
     const writer: CBConnectionWriterActor = ihsm.makeChildActor(parent, CBConnectionWriterTop, new CBConnectionWriterContext(channel), new CBConnectionWriterPort(this), new CbActorSpawnOptions(),);
     await reader.hsm.sync();
     await writer.hsm.sync();
-    await reader.call.initialize();
-    await writer.call.initialize();
     return { reader, writer };
   }
 }

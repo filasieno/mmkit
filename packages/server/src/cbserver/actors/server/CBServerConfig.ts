@@ -1,13 +1,15 @@
 import type { EventEmitter } from "node:events";
 import * as ihsm from "ihsm";
 import type { CBServerConfig } from "./settings/CBServerSettings";
-import type { CBConnectionActor } from "../connection/CBServerConnectionConfig";
+import type { CBConnectionActor, CBConnectionActorHandle } from "../connection/CBServerConnectionConfig";
 import type { CBStderrLogReaderActor, StderrLogReaderMachineConfig } from "../stderrLogReader/CBServerStderrReaderConfig";
 import type { CBStdoutLogReaderActor, StdoutLogReaderMachineConfig } from "../stdoutLogReader/CBServerStdoutLogReaderConfig";
-import type { ICBConnection, ICBConnectionOptions, ProcessIoListener, ProcessSignal, StatusListener } from "../../shared/CBServerDefs";
+import type { ICBConnectionOptions, ProcessIoListener, ProcessSignal, StatusListener } from "../../shared/CBServerDefs";
 import type { TcpConnectProbeOptions } from "./tcpPortProbe";
 import type { CBConnectionContext } from "../connection/CBServerConnectionContext";
 import type { CBConnectionOrchestratorPort } from "../connection/CBConnectionOrchestratorPort";
+import type { CBServerInitializeRequest } from "./CBServerInitializeRequest";
+import type { CBServerInitializeSlot } from "./CBServerInitializeRequest";
 
 export type CBServerLogChildren = { stdoutLogReader: CBStdoutLogReaderActor; stderrLogReader: CBStderrLogReaderActor };
 export type CBServerLastExit = { code: number | null; signal: NodeJS.Signals | null; errorMessage?: string };
@@ -45,6 +47,11 @@ export interface ICBServerContext {
   dispatchInterruptToChildren(): void;
   noteLogReaderInterrupted(): void;
   allInterrupted(): boolean;
+  initializeSlot?: CBServerInitializeSlot;
+  beginInitialize(): CBServerInitializeRequest;
+  noteInitializeProgress(state: string): void;
+  completeInitialize(state: string): void;
+  failInitialize(error: Error): void;
 }
 
 export interface CBServerNotifications {
@@ -54,8 +61,8 @@ export interface CBServerNotifications {
 }
 
 export interface CBServerServices {
-  initialize(): Promise<void>;
-  createConnection(options?: ICBConnectionOptions): Promise<ICBConnection>;
+  initialize(): Promise<CBServerInitializeRequest>;
+  createConnection(options?: ICBConnectionOptions): Promise<CBConnectionActorHandle>;
   subscribeStatus(listener: StatusListener): Promise<ihsm.Disposable>;
   subscribeProcessIo(listener: ProcessIoListener): Promise<ihsm.Disposable>;
   getCurrentStateName(): Promise<string>;

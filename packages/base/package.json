@@ -1,6 +1,6 @@
 {
   "name": "@mmkit/base",
-  "version": "0.2.0",
+  "version": "0.0.2",
   "private": true,
   "license": "BSD-2-Clause",
   "main": "./dist/index.js",

@@ -15,31 +15,38 @@ import * as self from "./CBNotificationChannelActor";
  *
  * ```text
  * CBNotificationChannelTop
- * * NotificationUninitialized
- * - NotificationConnecting
+ * * NotificationBootstrap
+ *   * NotificationConnecting
+ * - NotificationChannelBase
  * - NotificationTransport
- *   * NotificationIdle
+ *   - NotificationSession
+ *     * NotificationIdle
  *   - NotificationAwaiting
  *   - NotificationClosing
  * - NotificationTerminal → NotificationDetaching → NotificationClosed | NotificationBroken
  * ```
+ *
+ * Handler matrix: `docs/cbserver-actor-handler-matrix.md` § CBNotificationChannelTop.
+ * Invariant predicates: {@link CBNotificationChannelInvariants}.
  */
 
+/**
+ * Shared notification-channel handlers before enrollment or during transport setup.
+ *
+ * **Invariant policy:** Leaf states assert via {@link CBNotificationChannelInvariants}; this base
+ * intentionally skips `_checkInvariant` because Connecting, Idle, Awaiting, Closing, and Terminal
+ * each impose different predicates.
+ *
+ * **Handler policy:** `close()` and `beginGetNotification()` throw when not ready. Terminal
+ * subclasses noop-absorb late reader/socket events.
+ *
+ * @see docs/cbserver-actor-handler-matrix.md § CBNotificationChannelTop
+ */
 @ihsm.InitialState
-export class NotificationUninitialized extends CBNotificationChannelTop {
+export class NotificationBootstrap extends CBNotificationChannelTop {
   protected override _checkInvariant(): void {
-    inv.assertNotificationUninitialized(this.ctx);
+    // Leaf states assert; see class-level comment on {@link NotificationChannelBase}.
   }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.ctx.channelMailbox = (this.hsm.port as unknown as CBNotificationChannelPortHandle).actor;
-    this.hsm.transition(NotificationConnecting);
-  }
-}
-
-export class NotificationChannelBase extends CBNotificationChannelTop {
-  protected override _checkInvariant(): void {}
 
   protected clearNotificationReadTimer(): void {
     if (this.ctx.notificationReadTimer !== undefined) {
@@ -123,12 +130,20 @@ export class NotificationChannelBase extends CBNotificationChannelTop {
   }
 }
 
-export class NotificationConnecting extends NotificationChannelBase {
+export class NotificationChannelBase extends NotificationBootstrap {
+  protected override _checkInvariant(): void {
+    // Leaf states assert; see NotificationBootstrap class-level comment.
+  }
+}
+
+@ihsm.InitialState
+export class NotificationConnecting extends NotificationBootstrap {
   protected override _checkInvariant(): void {
     inv.assertNotificationConnecting(this.ctx);
   }
 
   onEntry(): void {
+    this.ctx.channelMailbox = (this.hsm.port as unknown as CBNotificationChannelPortHandle).actor;
     this.notifyNow.doConnect();
   }
 
@@ -276,6 +291,7 @@ export class NotificationSession extends NotificationTransport {
   }
 }
 
+@ihsm.InitialState
 export class NotificationIdle extends NotificationSession {
   protected override _checkInvariant(): void {
     inv.assertNotificationIdle(this.ctx);
@@ -391,8 +407,22 @@ export class NotificationAwaiting extends NotificationSession {
     this.ctx.children!.reader.notify.onEnd();
   }
 
+  /**
+   * Graceful close while blocked on a notification read (e.g. server shutdown races an
+   * in-flight `getNotificationMessage`). Settle the waiter with a synthetic timeout answer
+   * and finalize directly — the abandoned read is torn down with the transport rather than
+   * throwing into FatalErrorState. `NotificationAwaiting` sits under `NotificationSession`
+   * (which forbids `closed`), so we cannot defer in-place; we finalize immediately instead.
+   */
   close(): void {
-    throw new Error("notification channel is awaiting a message");
+    this.clearNotificationReadTimer();
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } | undefined = this.ctx.pendingNotification;
+    if (waiter !== undefined) {
+      this.ctx.pendingNotification = undefined;
+      waiter.resolve( { ok: false, completion: CB_IPC_COMPLETIONS.TIMEOUT, result: "closed", term: 'ipcanswer("",timeout,"closed").', } );
+    }
+    this.ctx.closed = true;
+    this.notifyNow.doFinalizeClose();
   }
 }
 

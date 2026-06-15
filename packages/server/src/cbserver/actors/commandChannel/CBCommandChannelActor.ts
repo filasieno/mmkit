@@ -18,8 +18,9 @@ type RejectedCommand = { command: string; [arg: string]: unknown };
  *
  * ```text
  * CBCommandChannelTop
- * * CommandUninitialized
- * - CommandConnecting
+ * * CommandBootstrap
+ *   * CommandConnecting
+ * - CommandChannelBase
  * - CommandTransport
  *   - CommandSession
  *     * CommandIdle
@@ -27,27 +28,23 @@ type RejectedCommand = { command: string; [arg: string]: unknown };
  *   - CommandClosing
  * - CommandTerminal → CommandDetaching → CommandClosed | CommandBroken
  * ```
+ *
+ * Handler matrix: `docs/cbserver-actor-handler-matrix.md` § CBCommandChannelTop.
+ * Invariant predicates: {@link CBCommandChannelInvariants}.
  */
 
 @ihsm.InitialState
-export class CommandUninitialized extends CBCommandChannelTop {
-  protected override _checkInvariant(): void {
-    inv.assertCommandUninitialized(this.ctx);
-  }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.ctx.channelMailbox = (this.hsm.port as unknown as CBCommandChannelPortHandle).actor;
-    this.hsm.transition(CommandConnecting);
-  }
-}
-
-export class CommandChannelBase extends CBCommandChannelTop {
+export class CommandBootstrap extends CBCommandChannelTop {
   /**
-   * Shared command-channel handlers. Invariant check deferred to leaf states — see
-   * {@link module:cbserver/actors/commandChannel/CBCommandChannelInvariants}.
+   * Spawn-time composite — {@link ihsm.InitialState} link from {@link CBCommandChannelTop}.
+   * Shared channel handlers live here so {@link CommandConnecting} and {@link CommandChannelBase}
+   * both inherit them.
+   *
+   * @see docs/cbserver-actor-handler-matrix.md § CBCommandChannelTop
    */
-  protected override _checkInvariant(): void {}
+  protected override _checkInvariant(): void {
+    // Leaf states assert; see class-level comment on {@link CommandChannelBase}.
+  }
 
   async getRawClientId(): Promise<string> {
     return this.ctx.getRawClientId();
@@ -193,12 +190,20 @@ export class CommandChannelBase extends CBCommandChannelTop {
   }
 }
 
-export class CommandConnecting extends CommandChannelBase {
+export class CommandChannelBase extends CommandBootstrap {
+  protected override _checkInvariant(): void {
+    // Leaf states assert; see CommandBootstrap class-level comment.
+  }
+}
+
+@ihsm.InitialState
+export class CommandConnecting extends CommandBootstrap {
   protected override _checkInvariant(): void {
     inv.assertCommandConnecting(this.ctx);
   }
 
   onEntry(): void {
+    this.ctx.channelMailbox = (this.hsm.port as unknown as CBCommandChannelPortHandle).actor;
     this.notifyNow.doConnect();
     inv.assertCommandConnecting(this.ctx);
   }
@@ -250,6 +255,10 @@ export class CommandTransport extends CommandChannelBase {
   doProcessNext(): void {
     this._checkInvariant();
     if (this.ctx.requestQueue.length === 0) {
+      if (this.ctx.closed) {
+        this.notifyNow.doFinalizeClose();
+        return;
+      }
       this.hsm.transition(CommandIdle);
       return;
     }
@@ -336,6 +345,10 @@ export class CommandTransport extends CommandChannelBase {
         this.ctx.clientId = encodeCbString(clientName);
       }
       active.resolve(answer);
+      if (this.ctx.closed) {
+        this.notifyNow.doFinalizeClose();
+        return;
+      }
       this.hsm.transition(CommandIdle);
       return;
     }
@@ -360,6 +373,10 @@ export class CommandTransport extends CommandChannelBase {
     }
 
     active.resolve(answer);
+    if (this.ctx.closed) {
+      this.notifyNow.doFinalizeClose();
+      return;
+    }
     if (this.ctx.requestQueue.length === 0) {
       this.hsm.transition(CommandIdle);
       return;
@@ -377,6 +394,10 @@ export class CommandTransport extends CommandChannelBase {
     this.ctx.activeRequest = undefined;
     this.ctx.pendingFrame = undefined;
     active?.reject(new Error(message));
+    if (this.ctx.closed) {
+      this.notifyNow.doFinalizeClose();
+      return;
+    }
     if (this.ctx.requestQueue.length === 0) {
       this.hsm.transition(CommandIdle);
       return;
@@ -392,6 +413,7 @@ export class CommandSession extends CommandTransport {
   }
 }
 
+@ihsm.InitialState
 export class CommandIdle extends CommandSession {
   protected override _checkInvariant(): void {
     inv.assertCommandIdle(this.ctx);
@@ -492,9 +514,15 @@ export class RequestProcessing extends CommandTransport {
     inv.assertRequestProcessing(this.ctx);
   }
 
+  /**
+   * Close requested while a command is in flight (e.g. server shutdown races the answer).
+   * Defer it: mark `closed` and let the active request settle — `doReadComplete` /
+   * `doFailActive` / `doProcessNext` then finalize instead of returning to CommandIdle.
+   * Never throw here; a shutdown is a legitimate event, not a programming error.
+   */
   close(): void {
     this._checkInvariant();
-    throw new Error("channel is busy");
+    this.ctx.closed = true;
   }
 }
 

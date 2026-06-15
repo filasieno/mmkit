@@ -7,9 +7,6 @@ export interface CBConnectionReaderNotifications {
   beginAwait(): void;
 }
 
-export interface CBConnectionReaderServices {
-  initialize(): Promise<void>;
-}
 
 export interface CBConnectionReaderInternalNotifications {
   onData(chunk: string): void;
@@ -22,7 +19,6 @@ export interface CBConnectionReaderInternalNotifications {
 export interface CBConnectionReaderMachineConfig {
   context: ICBConnectionReaderContext;
   notifications: CBConnectionReaderNotifications;
-  services: CBConnectionReaderServices;
   internalNotifications: CBConnectionReaderInternalNotifications;
 }
 

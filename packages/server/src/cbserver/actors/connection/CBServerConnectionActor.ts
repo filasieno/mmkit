@@ -1,6 +1,7 @@
 import * as ihsm from "ihsm";
-import { encodeCbString } from "@mmkit/base";
+import { decodeCbString } from "@mmkit/base";
 import type { CBAnswer } from "../../shared/CBServerDefs";
+import { IpcAnswer } from "../../shared/CBServerDefs";
 import { CBConnectionTop } from "./CBServerConnectionConfig";
 import type { CBConnectionActorRef } from "./CBServerConnectionConfig";
 import type { CBCommandChannelActor, CBCommandChannelPortInput } from "../commandChannel/CBCommandChannelConfig";
@@ -11,6 +12,9 @@ import { CBNotificationChannelContext, waitForNotificationChannelBootstrap, wait
 import { CBCommandChannelPort } from "../commandChannel/CBCommandChannelPort";
 import { CBNotificationChannelPort } from "../notificationChannel/CBNotificationChannelPort";
 import { cbTrace } from "../../shared/cbTrace";
+import type { CBCommandRequest } from "./CBCommandRequest";
+import type { QueuedCommand } from "./CBCommandQueue";
+import { mergeCbAnswers, normalizeAskNilResult } from "./utils";
 import * as inv from "./CBServerConnectionInvariants";
 import * as self from "./CBServerConnectionActor";
 
@@ -19,38 +23,44 @@ import * as self from "./CBServerConnectionActor";
  *
  * ```text
  * CBConnectionTop
- * * ConnectionUninitialized
- * - Connecting
- * * ConnectionIdle
+ * * ConnectionBootstrap
+ *   * Connecting
+ * - ConnectionBase
  * - ConnectionClosing
  * - ConnectionTerminal
  *   - ConnectionClosed
  *   - ConnectionBroken
  * ```
+ *
+ * Handler matrix: `docs/cbserver-actor-handler-matrix.md` § CBConnectionTop.
+ * Invariant predicates: {@link CBServerConnectionInvariants}.
  */
 
-@ihsm.InitialState
-export class ConnectionUninitialized extends CBConnectionTop {
-  /** @see {@link assertConnectionUninitialized} */
-  protected override _checkInvariant(): void {
-    inv.assertConnectionUninitialized(this.ctx);
+function splitTellTransactions(frames: string): string[] {
+  const normalized = frames.replace(/\r\n/g, "\n");
+  if (!normalized.includes("{---}")) {
+    return [normalized];
   }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.hsm.transition(Connecting);
+  const chunks: string[] = [];
+  for (const chunk of normalized.split("{---}")) {
+    const trimmed = chunk.trim();
+    if (trimmed !== "") {
+      chunks.push(trimmed);
+    }
   }
+  return chunks;
 }
 
-export class ConnectionBase extends CBConnectionTop {
-  /**
-   * Shared handlers for all connection states before a leaf overrides.
-   *
-   * **Known gap:** intentionally empty — leaf states must call `_checkInvariant()` in
-   * each handler. Prefer moving checks to leaves or delegating to
-   * {@link module:cbserver/actors/connection/CBServerConnectionInvariants}.
-   */
-  protected override _checkInvariant(): void {}
+/**
+ * Spawn-time composite — {@link ihsm.InitialState} link from {@link CBConnectionTop}.
+ * Shared orchestrator handlers live here so {@link Connecting} (initial leaf) and
+ * {@link ConnectionBase} (operational branch) both inherit them.
+ */
+@ihsm.InitialState
+export class ConnectionBootstrap extends CBConnectionTop {
+  protected override _checkInvariant(): void {
+    // Leaf states assert; see class-level comment on {@link ConnectionBase}.
+  }
 
   async getConnectionId(): Promise<string> {
     return this.ctx.connectionId;
@@ -75,76 +85,32 @@ export class ConnectionBase extends CBConnectionTop {
     throw new Error("connection is not ready");
   }
 
-  rejectCommand(): void {
+  rejectCommand(): Promise<CBCommandRequest> {
     throw new Error("connection is not ready");
   }
 
-  dispatchTell(_frames: string): void {
-    this.rejectCommand();
-  }
-  dispatchUntell(_frames: string): void {
-    this.rejectCommand();
-  }
-  dispatchRetell(_untellFrames: string, _tellFrames: string): void {
-    this.rejectCommand();
-  }
-  dispatchTellModel(..._files: string[]): void {
-    this.rejectCommand();
-  }
-  dispatchAsk(_query: string, _queryFormat?: string, _answerRep?: string, _rollbackTime?: string): void {
-    this.rejectCommand();
-  }
-  dispatchHypoAsk( _frames: string, _query: string, _queryFormat?: string, _answerRep?: string, _rollbackTime?: string ): void {
-    this.rejectCommand();
-  }
-  dispatchLpicall(_lpiCall: string): void {
-    this.rejectCommand();
-  }
-  dispatchProlog(_statement: string): void {
-    this.rejectCommand();
-  }
-  dispatchWhy(): void {
-    this.rejectCommand();
-  }
-  dispatchCd(_modulePath?: string): void {
-    this.rejectCommand();
-  }
-  dispatchPwd(): void {
-    this.rejectCommand();
-  }
-  dispatchLm(_modulePath?: string): void {
-    this.rejectCommand();
-  }
-  dispatchLs(_className?: string): void {
-    this.rejectCommand();
-  }
-  dispatchMkdir(_moduleName: string): void {
-    this.rejectCommand();
-  }
-  dispatchWho(): void {
-    this.rejectCommand();
-  }
-  dispatchSub(): void {
-    this.rejectCommand();
-  }
-  dispatchShow(_objectName: string): void {
-    this.rejectCommand();
-  }
-  dispatchNextMessage(_messageType?: string): void {
-    this.rejectCommand();
-  }
-  dispatchStopServer(_password = ""): void {
-    this.rejectCommand();
-  }
-  dispatchReportClients(): void {
-    this.rejectCommand();
-  }
-  dispatchNotificationRequest(_about: string, _tool?: string): void {
-    this.rejectCommand();
-  }
-  dispatchGetNotificationMessage(_timeoutMs?: number): void {
-    this.rejectCommand();
-  }
+  async tell(_frames: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async untell(_frames: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async retell(_untellFrames: string, _tellFrames: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async tellModel(..._files: string[]): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async ask(_query: string, _queryFormat?: string, _answerRep?: string, _rollbackTime?: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async hypoAsk(_frames: string, _query: string, _queryFormat?: string, _answerRep?: string, _rollbackTime?: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async lpicall(_lpiCall: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async prolog(_statement: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async why(): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async cd(_modulePath?: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async pwd(): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async lm(_modulePath?: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async ls(_className?: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async mkdir(_moduleName: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async who(): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async sub(): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async show(_objectName: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async nextMessage(_messageType?: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async stopServer(_password = ""): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async reportClients(): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async notificationRequest(_about: string, _tool?: string): Promise<CBCommandRequest> { return this.rejectCommand(); }
+  async getNotificationMessage(_timeoutMs?: number): Promise<CBCommandRequest> { return this.rejectCommand(); }
 
   doBreakTransport(message: string): void {
     this.ctx.brokenReason = message;
@@ -168,6 +134,16 @@ export class ConnectionBase extends CBConnectionTop {
     }
     this.hsm.transition(ConnectionClosed);
   }
+
+  /**
+   * Default no-ops: command-queue pumping and deferred-close only happen in
+   * {@link ConnectionIdle}. Defined on the base so the self-notifications posted from
+   * {@link ConnectionIdle.finishActiveAnswer} are safely absorbed if the connection has
+   * already left ConnectionIdle (e.g. a forced close or transport break races an in-flight
+   * command answer) instead of crashing as an unhandled event.
+   */
+  doProcessCommandQueue(): void {}
+  doCloseAfterDrain(): void {}
 
   onCommandChannelClosed(): void {
     this.ctx.noteCommandChannelClosed();
@@ -202,8 +178,19 @@ export class ConnectionBase extends CBConnectionTop {
   }
 }
 
-export class Connecting extends ConnectionBase {
-  /** @see {@link assertConnecting} */
+/**
+ * Operational branch under {@link ConnectionBootstrap} — leaf states assert invariants.
+ *
+ * @see docs/cbserver-actor-handler-matrix.md § CBConnectionTop
+ */
+export class ConnectionBase extends ConnectionBootstrap {
+  protected override _checkInvariant(): void {
+    // Leaf states assert; see class-level comment.
+  }
+}
+
+@ihsm.InitialState
+export class Connecting extends ConnectionBootstrap {
   protected override _checkInvariant(): void {
     inv.assertConnecting(this.ctx);
   }
@@ -252,10 +239,6 @@ export class Connecting extends ConnectionBase {
 }
 
 export class ConnectionIdle extends ConnectionBase {
-  /**
-   * Both channels enrolled — IPC bridge active.
-   * @see {@link assertConnectionIdle}
-   */
   protected override _checkInvariant(): void {
     inv.assertConnectionIdle(this.ctx);
   }
@@ -266,215 +249,285 @@ export class ConnectionIdle extends ConnectionBase {
     this.hsm.transition(ConnectionClosing);
   }
 
-  private bridgeCommandAnswer(channelAnswer: Promise<CBAnswer>): void {
-    const waiter: NonNullable<ICBConnectionContext["pendingCommand"]> = this.ctx.pendingCommand!;
-    void channelAnswer.then( (answer) => { waiter.resolve(answer); this.ctx.pendingCommand = undefined; if (this.ctx.closed && !this.ctx.notificationChannelClosed) { this.ctx.notificationChannel?.notify.close(); } }, (err: Error) => { waiter.reject(err); this.ctx.pendingCommand = undefined; }, );
-  }
-
-  dispatchTell(frames: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+  tell(frames: string): Promise<CBCommandRequest> {
+    this._checkInvariant();
+    const chunks = splitTellTransactions(frames);
+    if (chunks.length <= 1) {
+      return Promise.resolve(this.enqueueAndProcess({ kind: "tell", frames: chunks[0] ?? frames }));
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchTell(frames);
-    this.bridgeCommandAnswer(answer);
+    const request = this.ctx.enqueueCommand({ kind: "tellTransactions", frames });
+    const entry = this.ctx.commands.table.get(request.id)!;
+    entry.aux = { type: "tellTxn", chunks, index: 0 };
+    this.notifyNow.doProcessCommandQueue();
+    return Promise.resolve(request);
   }
 
-  dispatchUntell(frames: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+  private enqueueAndProcess(params: Parameters<ICBConnectionContext["enqueueCommand"]>[0]): CBCommandRequest {
+    this._checkInvariant();
+    const request = this.ctx.enqueueCommand(params);
+    this.notifyNow.doProcessCommandQueue();
+    return request;
+  }
+
+  async untell(frames: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "untell", frames }); }
+  async retell(untellFrames: string, tellFrames: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "retell", untellFrames, tellFrames }); }
+  async tellModel(...files: string[]): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "tellModel", files }); }
+  async ask(query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "ask", query, queryFormat, answerRep, rollbackTime }); }
+  async hypoAsk(frames: string, query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "hypoAsk", frames, query, queryFormat, answerRep, rollbackTime }); }
+  async lpicall(lpiCall: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "lpicall", lpiCall }); }
+  async prolog(statement: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "prolog", statement }); }
+  async why(): Promise<CBCommandRequest> {
+    const request = this.ctx.enqueueCommand({ kind: "why" });
+    const entry = this.ctx.commands.table.get(request.id)!;
+    entry.aux = { type: "whyDrain", parts: [] };
+    this.notifyNow.doProcessCommandQueue();
+    return request;
+  }
+  async cd(modulePath?: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "cd", modulePath }); }
+  async pwd(): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "pwd" }); }
+  async lm(modulePath?: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "lm", modulePath }); }
+  async ls(className?: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "ls", className }); }
+  async mkdir(moduleName: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "mkdir", moduleName }); }
+  async who(): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "who" }); }
+  async sub(): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "sub" }); }
+  async show(objectName: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "show", objectName }); }
+  async nextMessage(messageType?: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "nextMessage", messageType }); }
+  async stopServer(password = ""): Promise<CBCommandRequest> {
+    this.ctx.closeRequested = true;
+    return this.enqueueAndProcess({ kind: "stopServer", password });
+  }
+  async reportClients(): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "reportClients" }); }
+  async notificationRequest(about: string, tool?: string): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "notificationRequest", about, tool }); }
+  async getNotificationMessage(timeoutMs = 0): Promise<CBCommandRequest> { return this.enqueueAndProcess({ kind: "getNotificationMessage", timeoutMs }); }
+
+  doProcessCommandQueue(): void {
+    this._checkInvariant();
+    if (this.ctx.commands.activeId !== undefined) {
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchUntell(frames);
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchRetell(untellFrames: string, tellFrames: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+    const entry: QueuedCommand | undefined = this.ctx.commands.peek();
+    if (entry === undefined) {
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchRetell(untellFrames, tellFrames);
-    this.bridgeCommandAnswer(answer);
+    this.ctx.commands.markActive(entry.id);
+    this.dispatchQueuedCommand(entry);
   }
 
-  dispatchTellModel(...files: string[]): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+  private dispatchQueuedCommand(entry: QueuedCommand): void {
+    const params = entry.params;
+    if (params.kind === "getNotificationMessage") {
+      const channelAnswer: Promise<CBAnswer> = waitForNotificationChannelAnswer(this.ctx.notificationCtx!);
+      this.bridgeActiveAnswer(channelAnswer);
+      this.ctx.notificationChannel!.notify.beginGetNotification(params.timeoutMs);
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchTellModel(...files);
-    this.bridgeCommandAnswer(answer);
-  }
 
-  dispatchAsk(query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+    const channelAnswer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    this.bridgeActiveAnswer(channelAnswer);
+    const channel = this.ctx.commandChannel!;
+
+    switch (params.kind) {
+      case "tell":
+        channel.notify.dispatchTell(params.frames);
+        break;
+      case "tellTransactions": {
+        const aux = entry.aux;
+        if (aux?.type !== "tellTxn") {
+          throw new Error("tellTransactions missing aux state");
+        }
+        channel.notify.dispatchTell(aux.chunks[aux.index]!);
+        break;
+      }
+      case "untell":
+        channel.notify.dispatchUntell(params.frames);
+        break;
+      case "retell":
+        channel.notify.dispatchRetell(params.untellFrames, params.tellFrames);
+        break;
+      case "tellModel":
+        channel.notify.dispatchTellModel(...params.files);
+        break;
+      case "ask":
+        channel.notify.dispatchAsk(params.query, params.queryFormat, params.answerRep, params.rollbackTime);
+        break;
+      case "hypoAsk":
+        channel.notify.dispatchHypoAsk(params.frames, params.query, params.queryFormat, params.answerRep, params.rollbackTime);
+        break;
+      case "lpicall":
+        channel.notify.dispatchLpicall(params.lpiCall);
+        break;
+      case "prolog":
+        channel.notify.dispatchProlog(params.statement);
+        break;
+      case "why":
+        channel.notify.dispatchWhy();
+        break;
+      case "cd":
+        channel.notify.dispatchCd(params.modulePath);
+        break;
+      case "pwd":
+        channel.notify.dispatchPwd();
+        break;
+      case "lm":
+        channel.notify.dispatchLm(params.modulePath);
+        break;
+      case "ls":
+        channel.notify.dispatchLs(params.className);
+        break;
+      case "mkdir":
+        channel.notify.dispatchMkdir(params.moduleName);
+        break;
+      case "who":
+        channel.notify.dispatchWho();
+        break;
+      case "sub":
+        channel.notify.dispatchSub();
+        break;
+      case "show":
+        channel.notify.dispatchShow(params.objectName);
+        break;
+      case "nextMessage":
+        channel.notify.dispatchNextMessage(params.messageType);
+        break;
+      case "stopServer":
+        channel.notify.dispatchStopServer(params.password);
+        break;
+      case "reportClients":
+        channel.notify.dispatchReportClients();
+        break;
+      case "notificationRequest": {
+        const target: string = params.tool ?? this.ctx.notificationCtx!.getRawClientId();
+        channel.notify.dispatchNotificationRequest(params.about, target);
+        break;
+      }
+      default:
+        this.ctx.commands.completeActive({ type: "error", error: new Error(`unsupported command kind`) });
+        this.notifyNow.doProcessCommandQueue();
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchAsk(query, queryFormat, answerRep, rollbackTime);
-    this.bridgeCommandAnswer(answer);
   }
 
-  dispatchHypoAsk(frames: string, query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+  private bridgeActiveAnswer(channelAnswer: Promise<CBAnswer>): void {
+    void channelAnswer.then(
+      (answer) => { this.onActiveChannelAnswer(answer); },
+      (err: Error) => {
+        this.ctx.commands.completeActive({ type: "error", error: err });
+        this.notifyNow.doProcessCommandQueue();
+      },
+    );
+  }
+
+  private onActiveChannelAnswer(answer: CBAnswer): void {
+    const id = this.ctx.commands.activeId;
+    if (id === undefined) {
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchHypoAsk(frames, query, queryFormat, answerRep, rollbackTime);
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchLpicall(lpiCall: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+    const entry = this.ctx.commands.table.get(id);
+    if (entry === undefined) {
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchLpicall(lpiCall);
-    this.bridgeCommandAnswer(answer);
-  }
 
-  dispatchProlog(statement: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+    // A forced close / transport break may move us out of ConnectionIdle while a command
+    // answer is still in flight. Settle the client's request with whatever arrived, but do
+    // not start follow-up drains (tellTransactions / why) or pump the queue while closing.
+    if (this.hsm.currentStateName !== "ConnectionIdle") {
+      this.ctx.commands.completeActive({ type: "answer", answer });
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchProlog(statement);
-    this.bridgeCommandAnswer(answer);
-  }
 
-  dispatchWhy(): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+    if (entry.aux?.type === "tellTxn") {
+      entry.aux.merged = mergeCbAnswers(answer, entry.aux.merged);
+      entry.aux.index += 1;
+      if (entry.aux.index < entry.aux.chunks.length) {
+        const channelAnswer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+        this.bridgeActiveAnswer(channelAnswer);
+        this.ctx.commandChannel!.notify.dispatchTell(entry.aux.chunks[entry.aux.index]!);
+        return;
+      }
+      const merged = entry.aux.merged ?? answer;
+      this.finishActiveAnswer(entry, merged);
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchWhy();
-    this.bridgeCommandAnswer(answer);
-  }
 
-  dispatchCd(modulePath?: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+    if (entry.aux?.type === "whyDrain") {
+      if (answer.result !== "empty_queue") {
+        const decoded = this.decodeErrorReport(answer);
+        if (decoded !== undefined) {
+          entry.aux.parts.push(decoded);
+          const channelAnswer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+          this.bridgeActiveAnswer(channelAnswer);
+          this.ctx.commandChannel!.notify.dispatchNextMessage("ERROR_REPORT");
+          return;
+        }
+      }
+      const text = entry.aux.parts.join("");
+      this.finishActiveAnswer(entry, new IpcAnswer(text, true, "ok", text));
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchCd(modulePath);
-    this.bridgeCommandAnswer(answer);
+
+    this.finishActiveAnswer(entry, this.postProcessAnswer(entry, answer));
   }
 
-  dispatchPwd(): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+  /**
+   * Begin a deferred close once the queue has fully drained. Driven by the
+   * `doCloseAfterDrain` self-notification (posted after `doProcessCommandQueue`) so the
+   * transition out of ConnectionIdle never races a queued `doProcessCommandQueue`.
+   */
+  doCloseAfterDrain(): void {
+    if (!this.ctx.closeRequested) {
+      return;
     }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchPwd();
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchLm(modulePath?: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
-    }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchLm(modulePath);
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchLs(className?: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
-    }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchLs(className);
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchMkdir(moduleName: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
-    }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchMkdir(moduleName);
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchWho(): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
-    }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchWho();
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchSub(): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
-    }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchSub();
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchShow(objectName: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
-    }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchShow(objectName);
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchNextMessage(messageType?: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
-    }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchNextMessage(messageType);
-    this.bridgeCommandAnswer(answer);
-  }
-
-  dispatchStopServer(password = ""): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+    if (this.ctx.commands.activeId !== undefined || this.ctx.commands.queue.length > 0) {
+      return;
     }
     this.ctx.closed = true;
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchStopServer(password);
-    this.bridgeCommandAnswer(answer);
+    this.hsm.transition(ConnectionClosing);
   }
 
-  dispatchReportClients(): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
-    }
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchReportClients();
-    this.bridgeCommandAnswer(answer);
+  private finishActiveAnswer(_entry: QueuedCommand, answer: CBAnswer): void {
+    this.ctx.commands.completeActive({ type: "answer", answer });
+    this.notifyNow.doProcessCommandQueue();
+    this.notifyNow.doCloseAfterDrain();
   }
 
-  dispatchNotificationRequest(about: string, tool?: string): void {
-    if (this.ctx.pendingCommand === undefined) {
-      throw new Error("no pending command waiter");
+  private postProcessAnswer(entry: QueuedCommand, answer: CBAnswer): CBAnswer {
+    const params = entry.params;
+    if (params.kind === "ask" || params.kind === "hypoAsk") {
+      return normalizeAskNilResult(answer, params.answerRep);
     }
-    const target: string = tool ?? this.ctx.notificationCtx!.getRawClientId();
-    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
-    this.ctx.commandChannel!.notify.dispatchNotificationRequest(about, target);
-    this.bridgeCommandAnswer(answer);
+    if (params.kind === "lm") {
+      return normalizeAskNilResult(answer, "FRAME");
+    }
+    if (params.kind === "ls" || params.kind === "who" || params.kind === "sub") {
+      return normalizeAskNilResult(answer, "LABEL");
+    }
+    if (params.kind === "show") {
+      return normalizeAskNilResult(answer, "FRAME");
+    }
+    return answer;
   }
 
-  dispatchGetNotificationMessage(_timeoutMs?: number): void {
-    if (this.ctx.pendingNotification === undefined) {
-      throw new Error("no pending notification waiter");
+  private decodeErrorReport(answer: CBAnswer): string | undefined {
+    const result = answer.result;
+    if (result === undefined || result === "empty_queue") {
+      return undefined;
     }
-    const channelAnswer: Promise<CBAnswer> = waitForNotificationChannelAnswer(this.ctx.notificationCtx!);
-    this.ctx.notificationChannel!.notify.beginGetNotification(_timeoutMs);
-    const waiter: NonNullable<ICBConnectionContext["pendingNotification"]> = this.ctx.pendingNotification;
-    void channelAnswer.then( (answer) => { waiter.resolve(answer); this.ctx.pendingNotification = undefined; }, (err: Error) => { waiter.reject(err); this.ctx.pendingNotification = undefined; }, );
+    if (!result.startsWith("ipcmessage")) {
+      return result;
+    }
+    const bracketStart = result.indexOf("[");
+    const bracketEnd = result.lastIndexOf("]");
+    if (bracketStart < 0 || bracketEnd <= bracketStart) {
+      return undefined;
+    }
+    const inner = result.slice(bracketStart + 1, bracketEnd).trim();
+    if (inner === "") {
+      return "";
+    }
+    return decodeCbString(inner) ?? inner;
   }
 }
 
 export class ConnectionClosing extends ConnectionBase {
-  /** @see {@link assertConnectionClosing} */
   protected override _checkInvariant(): void {
     inv.assertConnectionClosing(this.ctx);
   }
@@ -495,7 +548,6 @@ export class ConnectionClosing extends ConnectionBase {
 }
 
 export class ConnectionTerminal extends ConnectionBase {
-  /** @see {@link assertConnectionTerminal} */
   protected override _checkInvariant(): void {
     inv.assertConnectionTerminal(this.ctx);
   }
@@ -504,13 +556,12 @@ export class ConnectionTerminal extends ConnectionBase {
     this._checkInvariant();
   }
 
-  rejectCommand(): void {
+  rejectCommand(): Promise<CBCommandRequest> {
     throw new Error(this.ctx.brokenReason ?? "connection is closed");
   }
 }
 
 export class ConnectionClosed extends ConnectionTerminal {
-  /** @see {@link assertConnectionClosed} */
   protected override _checkInvariant(): void {
     inv.assertConnectionClosed(this.ctx);
   }
@@ -521,7 +572,6 @@ export class ConnectionClosed extends ConnectionTerminal {
 }
 
 export class ConnectionBroken extends ConnectionTerminal {
-  /** @see {@link assertConnectionBroken} */
   protected override _checkInvariant(): void {
     inv.assertConnectionBroken(this.ctx);
   }

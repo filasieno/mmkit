@@ -12,13 +12,16 @@ import * as self from "./CBServerStdoutLogReaderActor";
  *
  * ```text
  * StdoutLogReaderTop
- * * StdoutLogUninitialized
- * - StdoutLogInitialized
+ * * StdoutLogInitialized
  *   * StdoutLogIdle
  *   - StdoutLogStopped
  * ```
+ *
+ * Handler matrix: `docs/cbserver-actor-handler-matrix.md` § StdoutLogReaderTop.
+ * Invariant predicates: {@link CBServerStdoutLogReaderInvariants}.
  */
 
+@ihsm.InitialState
 export class StdoutLogInitialized extends StdoutLogReaderTop {
   /**
    * Past `initialize()` — if teardown has started, no partial stdout line may
@@ -28,6 +31,11 @@ export class StdoutLogInitialized extends StdoutLogReaderTop {
     inv.assertStdoutLogInitialized(this.ctx);
   }
 
+  async getCurrentStateName(): Promise<string> {
+    this._checkInvariant();
+    return this.hsm.currentStateName;
+  }
+
   interrupt(): void {
     this._checkInvariant();
     this.ctx.interrupt();
@@ -37,32 +45,6 @@ export class StdoutLogInitialized extends StdoutLogReaderTop {
   stop(): void {
     this._checkInvariant();
     this.hsm.transition(StdoutLogStopped);
-  }
-}
-
-@ihsm.InitialState
-export class StdoutLogUninitialized extends StdoutLogReaderTop {
-  /**
-   * Actor created; not yet splitting stdout for logging. Line buffer empty and
-   * no teardown in progress.
-   */
-  protected override _checkInvariant(): void {
-    inv.assertStdoutLogUninitialized(this.ctx);
-  }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.hsm.transition(StdoutLogInitialized);
-  }
-
-  stop(): void {
-    this._checkInvariant();
-  }
-
-  interrupt(): void {
-    this._checkInvariant();
-    this.ctx.interrupt();
-    this.ctx.postInterrupted();
   }
 }
 

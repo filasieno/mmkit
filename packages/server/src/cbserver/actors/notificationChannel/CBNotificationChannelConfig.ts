@@ -6,7 +6,6 @@ import type { CBConnectionWriterActor } from "../writer/CBConnectionWriterConfig
 
 /** Public `call` surface for the notification TCP channel actor. */
 export interface CBNotificationChannelServices {
-  initialize(): Promise<void>;
   getRawClientId(): Promise<string>;
 }
 

@@ -6,10 +6,11 @@ import { expect } from "chai";
 import type { RunningServer } from "./realHarness";
 import { describeReal, installRealTestGuards, PER_TEST_TIMEOUT_MS, raceTimeout, waitForEmptyRegistry, waitForServerState, withRealServer, MS, openConnection, } from "./realHarness";
 import { cbTraceAnswer } from "../../src/cbserver/shared/cbTrace";
+import { waitCommand } from "../../src/cbserver/shared/CBServerDefs";
 
 async function runStopServerCmd(server: RunningServer): Promise<void> {
   const connection = await openConnection(server);
-  const answerP = raceTimeout(connection.stopServer(""), "stopServer", MS.cmd);
+  const answerP = raceTimeout(waitCommand(connection.call.stopServer("")), "stopServer", MS.cmd);
   const stoppedP = waitForServerState(server, "Stopped", "stop-after-stop-server", MS.stop);
   const [answerResult, stoppedResult] = await raceTimeout( Promise.allSettled([answerP, stoppedP]), "stop-server-settle", MS.teardown );
   expect(stoppedResult.status, "server must reach Stopped").to.equal("fulfilled");

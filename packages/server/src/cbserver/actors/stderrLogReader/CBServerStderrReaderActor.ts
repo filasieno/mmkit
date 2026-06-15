@@ -12,13 +12,16 @@ import * as self from "./CBServerStderrReaderActor";
  *
  * ```text
  * StderrReaderTop
- * * StderrUninitialized
- * - StderrInitialized
+ * * StderrInitialized
  *   * StderrIdle
  *   - StderrStopped
  * ```
+ *
+ * Handler matrix: `docs/cbserver-actor-handler-matrix.md` § StderrLogReaderTop.
+ * Invariant predicates: {@link CBServerStderrLogReaderInvariants}.
  */
 
+@ihsm.InitialState
 export class StderrInitialized extends StderrLogReaderTop {
   /**
    * Past `initialize()` — if teardown has started, no partial stderr line may
@@ -42,32 +45,6 @@ export class StderrInitialized extends StderrLogReaderTop {
   stop(): void {
     this._checkInvariant();
     this.hsm.transition(StderrStopped);
-  }
-}
-
-@ihsm.InitialState
-export class StderrUninitialized extends StderrLogReaderTop {
-  /**
-   * Actor created; not yet splitting stderr into lines. Line buffer empty and
-   * no teardown in progress.
-   */
-  protected override _checkInvariant(): void {
-    inv.assertStderrLogUninitialized(this.ctx);
-  }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.hsm.transition(StderrInitialized);
-  }
-
-  stop(): void {
-    this._checkInvariant();
-  }
-
-  interrupt(): void {
-    this._checkInvariant();
-    this.ctx.interrupt();
-    this.ctx.postInterrupted();
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@mmkit/server",
-  "version": "0.2.0",
+  "version": "0.0.2",
   "private": true,
   "license": "BSD-2-Clause",
   "main": "./dist/server.js",
@@ -12,7 +12,7 @@
     "prebuild": "npm run pregenerate",
     "build": "node esbuild.mjs",
     "test": "rm -rf out-test && tsc -p test/cbserver/tsconfig.json && mocha 'out-test/test/cbserver/**/*.test.js' --ignore 'out-test/test/cbserver/**/*.real.test.js'",
-    "test:cbserver:real": "node scripts/run-with-timeout.mjs 120000 bash scripts/run-cbserver-real-tests.sh",
+    "test:cbserver:real": "node scripts/run-with-timeout.mjs 600000 bash scripts/run-cbserver-real-tests.sh",
     "test:cbserver:real:one": "bash scripts/test-cbserver-real-one-by-one.sh",
     "test:cbserver:kill": "bash scripts/kill-cbserver-orphans.sh",
     "test:all": "npm run test",
@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
-    "@mmkit/base": "0.2.0",
+    "@mmkit/base": "0.0.2",
     "@modelcontextprotocol/express": "^2.0.0-alpha.2",
     "@modelcontextprotocol/node": "^2.0.0-alpha.2",
     "@modelcontextprotocol/server": "^2.0.0-alpha.2",

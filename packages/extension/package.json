@@ -2,7 +2,7 @@
   "name": "mmkit",
   "displayName": "Metamodelling Kit",
   "description": "ConceptBase metamodelling toolkit for VS Code.",
-  "version": "0.2.0",
+  "version": "0.0.2",
   "publisher": "conceptbase",
   "license": "BSD-2-Clause",
   "repository": {
@@ -29,7 +29,7 @@
     "vscode:prepublish": "npm run build"
   },
   "dependencies": {
-    "@mmkit/base": "0.2.0"
+    "@mmkit/base": "0.0.2"
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
