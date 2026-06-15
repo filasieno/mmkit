@@ -1,0 +1,275 @@
+---
+description: CBserver TCP IPC framing — wire format, term syntax, mmkit code map, common pitfalls
+globs: packages/server/src/**/*
+alwaysApply: false
+---
+
+# CBserver TCP framing reference (for AI agents)
+
+Authoritative sources in this repo:
+
+| Source | Path |
+|--------|------|
+| Protocol manual | `components/doc/prog-manual/chapters/Server-Interface.typ` |
+| Term grammar | `components/doc/prog-manual/chapters/IpcSyntax.typ` |
+| C client (send/receive) | `components/libcbc/src/CBinterface.c` — `send_message`, `connect_CB_server` |
+| Server write | `components/libcbgeneral/src/FileIO.c` — `ipc_write`, `ipc_read` |
+| Java reference client | `components/java/cbapi/src/main/java/i5/cb/api/LocalCBclient.java` |
+
+**Critical:** request and response use **different** wire formats. Do not use `X`-header parsing for server answers or newline-length for client requests.
+
+---
+
+## Wire overview
+
+```
+CLIENT ──request──► SERVER
+  [X][u32 BE len][ipcmessage(...).\n]
+
+SERVER ──response──► CLIENT
+  [ASCII decimal len]\n[ipcanswer(...).]\n
+```
+
+---
+
+## Client → server (requests)
+
+### Binary header (`X` prefix)
+
+Required for reliable communication (manual § ipcmessage). Five bytes:
+
+| Offset | Content |
+|--------|---------|
+| 0 | ASCII `'X'` (0x58) |
+| 1–4 | Body length as **big-endian uint32** (body only; header excluded) |
+
+### Body (UTF-8 / ASCII Prolog term)
+
+```
+ipcmessage(<sender>,<receiver>,<METHOD>,[<data>]).\n
+```
+
+- Term **must** end with `.\n`
+- `<METHOD>` is bare atom: `ENROLL_ME`, `TELL`, `ASK`, `GET_MODULE_PATH`, …
+- `<data>` is comma-separated payload inside `[...]` (may be empty: `[]`)
+- Strings use CB encoding: `"..."` with `\"` and `\\` escapes (`encodeCbString` / `CButil.encodeString`)
+
+### Reference implementations
+
+**C** (`CBinterface.c` `send_message`):
+
+```c
+sprintf(msg,"ipcmessage(%s,%s,%s,[%s]).\n", client, serverName, method, data);
+lenbuf[0]='X';
+lenbuf[1..4] = big_endian_u32(strlen(msg));
+write_socket(socket, lenbuf, 5);
+write_socket(socket, msg, len);
+```
+
+**Java** (`LocalCBclient.sendMessage`):
+
+```java
+String sMsg = "ipcmessage(" + encode(sToolId) + "," + encode(sServerId) +
+                "," + sMethod + ",[" + sData + "]).\n";
+dsOut.writeByte('X');
+dsOut.writeByte((len / 256^3) % 256); // ... four length bytes
+dsOut.writeBytes(sMsg);
+```
+
+**mmkit** (`@mmkit/shared` `buildIpcMessage` + `lengthPrefix`):
+
+- Build: `packages/shared` or archive `archive/packages/shared/src/cb-tcp.ts`
+- Send path: `CBServerConnectionContext.buildIpcFrame` → `lengthPrefix(message)`
+
+---
+
+## Server → client (responses)
+
+### No `X` header
+
+Server sends (`FileIO.c` `ipc_write`):
+
+1. ASCII decimal length + `\n` where `len = strlen("ipcanswer(...).")` (term only)
+2. The `ipcanswer(...).` bytes (no newline inside the counted length)
+3. An **extra** trailing `\n`
+
+### Read algorithm (C / Java / mmkit must match)
+
+1. Read bytes until `\n` → parse integer `len`
+2. Read **`len + 1`** bytes (term + trailing newline)
+3. Parse Prolog term from first `len` bytes (strip trailing `\n` if present)
+
+**C** (`send_message` after write):
+
+```c
+lenstr = read_string_until_char(socket, '\n');
+len = atoi(lenstr);
+read_socket(socket, ans, len + 1);
+```
+
+**Java** (`LocalCBclient.readAnswer`):
+
+```java
+sLen = dsIn.readLine();
+int iLen = Integer.parseInt(sLen);
+++iLen;
+read fully iLen bytes into buffer;
+```
+
+**mmkit** (`tcpFraming.ts` `tryParseTcpLengthFrame`):
+
+- Skip leading `\n` (leftover from previous frame)
+- Require `bodyStart + len + 1` bytes with `rest[bodyStart + len] === '\n'`
+- Return `body = term` without the trailing newline
+- Mock replies: `formatTcpLengthFrame(body)` — must include trailing `\n`
+
+### Answer term
+
+```
+ipcanswer(<sender>,<completion>,<result>).
+```
+
+| Field | Values |
+|-------|--------|
+| `sender` | Encoded string — usually server id; after ENROLL, client id is in `result` |
+| `completion` | `ok`, `error`, `not_handled`, `notification` (+ client-side `timeout`, `broken`) |
+| `result` | Encoded string payload (method-specific) |
+
+Parse with `parseAnswerTerm` / `IpcAnswer.fromTerm` (`cb-tcp.ts`, `CBServerDefs.ts`).
+
+---
+
+## Connection lifecycle
+
+```
+TCP connect
+  → ENROLL_ME (sender="", receiver="")
+  ← ipcanswer(..., ok, <clientId>)
+  → commands with enrolled clientId + serverId
+  ← ipcanswer per command
+  → CANCEL_ME (graceful close)
+  ← ipcanswer
+  → TCP close
+```
+
+| Step | `sender` / `receiver` in request | Notes |
+|------|----------------------------------|-------|
+| `ENROLL_ME` | both `""` | **First** message; only one allowed before connected |
+| All others | enrolled ids | Java: `bConnected \|\| method == ENROLL_ME` |
+| `CANCEL_ME` | enrolled ids | data `""` → `[]` |
+
+### ENROLL_ME payload
+
+Manual: `ENROLL_ME, [ <toolclass>, <username> ]`
+
+**Java** (`enrollMe`):
+
+```
+data = encode(tool) + "," + encode(user + "@" + hostname + "_" + arch + "_" + os)
+```
+
+**mmkit** (`buildEnrollPayload` in `cbIpcCatalog.ts`): same pattern via `CBTcpOptions.toolName` / `userName` + `os.hostname()` suffix.
+
+**Answer:** `result` = new client identifier (string). Store as `clientId` (encoded). `sender` in answer = server id → store as `serverId`.
+
+---
+
+## Method payloads (`<data>` inside `[...]`)
+
+Built in `cbIpcCatalog.ts`; mirror `LocalCBclient.java`.
+
+| Method | `data` format (inside `[...]`) |
+|--------|--------------------------------|
+| `TELL` | `encode(frames)` |
+| `UNTELL` | `encode(frames)` |
+| `TELL_MODEL` | `[encode(f1),encode(f2),...]` (list inside brackets) |
+| `RETELL` | `[encode(untell),encode(tell)]` |
+| `ASK` | `OBJNAMES\|FRAMES\|ASK,encode(query),encode(answerRep),encode(rollbackTime)` |
+| `HYPO_ASK` | `encode(frames),format,encode(query),encode(answerRep),encode(rollbackTime)` |
+| `ENROLL_ME` | `encode(tool),encode(user@host_arch_os)` |
+| `CANCEL_ME` | empty |
+| `GET_MODULE_PATH` | empty (`pwd`) |
+| `SET_MODULE_CONTEXT` | `encode(quotedModulePath)` (`cd`) |
+| `GET_MODULE_CONTEXT` | empty |
+| `LPI_CALL` | `encode(call)` |
+| `NEXT_MESSAGE` | `empty` or message type atom |
+| `NOTIFICATION_REQUEST` | `encode(about),targetClientId` |
+| `STOP_SERVER` | password string (often `""`) |
+| `REPORT_CLIENTS` | empty |
+
+Module arg (`IpcSyntax.typ` `<modulearg>`): optional `, IPCID` or `empty` — mmkit helpers default to omitting it.
+
+---
+
+## mmkit code map
+
+| Concern | Module |
+|---------|--------|
+| Request term + `X` send | `@mmkit/shared` `buildIpcMessage`, `lengthPrefix` |
+| Response parse | `tcpFraming.ts` `tryParseTcpLengthFrame` |
+| Method payloads | `cbIpcCatalog.ts` |
+| Frame build per command | `CBServerConnectionContext.buildIpcFrame` |
+| TCP socket I/O | `CBConnectionPort.ts` |
+| Answer dispatch | `cbreader/CBConnectionReaderContext.ts` |
+| Command API | `CBServerConnectionActor.ts` / `CBConnectionHandle.ts` |
+| IPC method enum | `cbIpcCatalog.ts` `CB_IPC_METHODS` |
+| Mock TCP tests | `test/cbserver/mockTcpSocket.ts` — uses `formatTcpLengthFrame` for fake answers |
+
+**Reader/writer split:** writer sends `lengthPrefix`; reader **only** uses `tryParseTcpLengthFrame` (not `lengthPrefix`).
+
+---
+
+## Common pitfalls (read before debugging)
+
+1. **Asymmetric framing** — Using `X` header or `lengthPrefix` on receive breaks parsing. Using newline-length on send may work on legacy server path but is not what Java/C do.
+
+2. **Trailing newline on responses** — After reading `len` bytes of term, server sends one more `\n`. Failing to consume it leaves `\n` in the buffer and **breaks the next frame** (ENROLL works, second command hangs). Always consume `len + 1` bytes or skip leading `\n` before the length line.
+
+3. **Partial reads** — TCP is a stream. Buffer until a full frame is available; do not assume one `data` event = one message.
+
+4. **Early response bytes** — Answers may arrive before the connection actor enters `Reading` / `beginAwait`. Buffer in the reader; only drain `notification` completions while idle (see `drainSpontaneousNotifications`).
+
+5. **ENROLL before commands** — `sender`/`receiver` must be `""` for ENROLL only. After enroll, use ids from the answer (mmkit: `ctx.clientId`, `ctx.serverId`).
+
+6. **Double-encoding** — `encodeCbString` adds quotes. If `result` from enroll is already decoded, encode once when storing `clientId`.
+
+7. **Stdout/stderr are not IPC** — Subprocess log lines use line-delimited text on pipes, not `ipcmessage` framing. Only the TCP socket carries IPC.
+
+8. **Legacy client send** — Server `ipc_read` accepts messages without `X` prefix (terminated by `).\n`). New clients must send `X` prefix per manual.
+
+---
+
+## Verification
+
+| Test | Command |
+|------|---------|
+| Framing unit tests | `npm test` in `packages/server` — `tcpFraming.test.ts`, `connection.test.ts` |
+| Real cbserver | `nix develop .#mmkit` → `npm run test:cbserver:real` |
+| Parent-exit / spawn | `scripts/verify-parent-exit-reap.mjs` |
+
+When adding mock socket replies in tests, use `formatTcpLengthFrame(term)` not `lengthPrefix(term)`.
+
+---
+
+## Quick hex example
+
+Request body (before `X` header):
+
+```
+ipcmessage("","",ENROLL_ME,["mmkit","user@host_x64_linux"]).\n
+```
+
+If body length = 58 (0x3A):
+
+```
+58 03A 00 00 00  →  X 00 00 00 3A  +  body bytes
+```
+
+Response:
+
+```
+45\n
+ipcanswer("cbserver",ok,"my-client-id").\n
+```
+
+where `45` = character length of `ipcanswer("cbserver",ok,"my-client-id").`

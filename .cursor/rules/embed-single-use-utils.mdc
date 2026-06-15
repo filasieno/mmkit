@@ -1,0 +1,27 @@
+---
+description: Inline one-off helpers — prefer long methods over single-use utilities
+globs: packages/**/*.ts
+alwaysApply: false
+---
+
+# Embed single-use utilities
+
+If a helper is called **once**, inline it at the call site. Do not extract a module-level or
+private function for a single use — prefer a longer method body instead.
+
+```typescript
+// ✅ GOOD — cwd logic lives where it is used (once)
+const dataDir = config.dataDir;
+const spawnCwd =
+  !dataDir ? undefined
+  : dataDir === "~" || dataDir === "~/" ? homedir()
+  : dataDir.startsWith("~/") ? path.join(homedir(), dataDir.slice(2))
+  : dataDir;
+
+// ❌ BAD — private helper used only once
+function resolveSpawnCwd(dataDir: string): string | undefined { … }
+cwd: resolveSpawnCwd(config.dataDir),
+```
+
+Extract a named function only when it is reused in **two or more** places, or when tests must
+mock it independently.

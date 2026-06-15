@@ -1,0 +1,105 @@
+# Development observability stack for mmkit LSP.
+# Started by the VS Code extension (mmkit.languageServer.launchKind = dockerCompose).
+name: mmkit-dev
+
+services:
+  otel-collector:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.133.0
+    command: ["--config=/etc/otel-collector-config.yml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yml:ro
+    ports:
+      - "${MMKIT_OTEL_GRPC_PORT:-14317}:4317"
+      - "${MMKIT_OTEL_HTTP_PORT:-14318}:4318"
+      - "${MMKIT_OTEL_HEALTH_PORT:-13133}:13133"
+    depends_on:
+      - victoriametrics
+      - victorialogs
+      - victoriatraces
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.128.0
+    ports:
+      - "${MMKIT_VICTORIAMETRICS_PORT:-18428}:8428"
+    volumes:
+      - vmdata:/storage
+      - ./prometheus-scrape.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--storageDataPath=/storage"
+      - "--opentelemetry.usePrometheusNaming=true"
+      - "--promscrape.config=/etc/prometheus/prometheus.yml"
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.36.1
+    ports:
+      - "${MMKIT_VICTORIALOGS_PORT:-19428}:9428"
+    volumes:
+      - vldata:/vlogs
+    command:
+      - "--storageDataPath=/vlogs"
+
+  victoriatraces:
+    image: victoriametrics/victoria-traces:v0.4.0
+    ports:
+      - "${MMKIT_VICTORIATRACES_PORT:-20428}:10428"
+    volumes:
+      - vtdata:/vtraces
+    command:
+      - "--storageDataPath=/vtraces"
+      - "--servicegraph.enableTask=true"
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    ports:
+      - "${MMKIT_GRAFANA_PORT:-13000}:3000"
+    volumes:
+      - grdata:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_INSTALL_PLUGINS: victoriametrics-metrics-datasource,victoriametrics-logs-datasource
+    depends_on:
+      - victoriametrics
+      - victorialogs
+      - victoriatraces
+
+  mmkit-lsp:
+    build:
+      context: ${MMKIT_BUILD_CONTEXT:-..}
+      dockerfile: ${MMKIT_CONTAINERFILE:-dev/Containerfile.lsp}
+    ports:
+      - "${MMKIT_LSP_PORT:-16011}:6011"
+    environment:
+      MMKIT_LSP_TRANSPORT: tcp
+      MMKIT_LSP_PORT: "6011"
+      OTEL_SERVICE_NAME: mmkit-lsp
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=mmkit,deployment.environment=development
+    depends_on:
+      - otel-collector
+
+  mmkit-http:
+    build:
+      context: ${MMKIT_BUILD_CONTEXT:-..}
+      dockerfile: ${MMKIT_CONTAINERFILE:-dev/Containerfile.lsp}
+    command: ["node", "http-server.js"]
+    ports:
+      - "${MMKIT_HTTP_PORT:-28080}:8080"
+    environment:
+      MMKIT_HTTP_PORT: "8080"
+      MMKIT_LSP_PROBE_HOST: mmkit-lsp
+      MMKIT_LSP_PROBE_PORT: "6011"
+      OTEL_SERVICE_NAME: mmkit-lsp-http
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=mmkit,deployment.environment=development
+    depends_on:
+      - mmkit-lsp
+      - otel-collector
+
+volumes:
+  vmdata: {}
+  vldata: {}
+  vtdata: {}
+  grdata: {}

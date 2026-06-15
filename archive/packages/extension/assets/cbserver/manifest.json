@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "description": "Fresh cbserver workspace seed for mmkit executable mode (no Docker).",
+  "markerFile": ".mmkit-installed",
+  "directories": ["workspace", "tmp", "load", "bin"],
+  "workspaceFiles": ["README.md"],
+  "executable": {
+    "bundleName": "cbserver",
+    "installRelPath": "bin/cbserver"
+  }
+}

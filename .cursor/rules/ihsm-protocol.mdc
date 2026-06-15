@@ -1,0 +1,104 @@
+---
+description: ihsm actor protocol — user commands and environment events only; no internal events
+globs: packages/server/src/**/*.ts
+alwaysApply: false
+---
+
+# ihsm protocol — Config bag pattern (0.1.1)
+
+| Actor | Config file | `MachineConfig` | Top state | Invariants |
+|---|---|---|---|---|
+| Supervisor | `CBServerConfig.ts` | `CBServerMachineConfig` | `CBServerTop` | `CBServerInvariants.ts` |
+| Connection | `CBServerConnectionConfig.ts` | `CBConnectionMachineConfig` | `CBConnectionTop` | `CBServerConnectionInvariants.ts` |
+| TCP reader | `cbreader/CBConnectionReaderConfig.ts` | `CBConnectionReaderMachineConfig` | `CBConnectionReaderTop` | `cbreader/CBConnectionReaderInvariants.ts` |
+| TCP writer | `cbwriter/CBConnectionWriterConfig.ts` | `CBConnectionWriterMachineConfig` | `CBConnectionWriterTop` | `cbwriter/CBConnectionWriterInvariants.ts` |
+| Stderr log | `stderr/CBServerStderrReaderConfig.ts` | `StderrLogReaderMachineConfig` | `StderrLogReaderTop` | `stderr/CBServerStdoutLogReaderInvariants.ts` |
+| Stdout log | `stdout/CBServerStdoutLogReaderConfig.ts` | `StdoutLogReaderMachineConfig` | `StdoutLogReaderTop` | `stdout/CBServerStdoutLogReaderInvariants.ts` |
+
+Each Config file declares an empty **`TopState<MachineConfig>`** (no event handlers; optional no-op `_checkInvariant()` when descendants use invariant checks). Concrete states live in `*Actor.ts` and extend that top class.
+
+**Port type aliases** (per Config file — use these instead of raw `ihsm.IPort` / `ihsm.Port` in actors):
+
+| Alias | Meaning |
+|---|---|
+| `*PortInstance` | Production `ihsm.Port<typeof *Top>` subclass |
+| `*PortHandle` | `ihsm.IPort<MachineConfig>` — `hsm.port` cast for `.actor` |
+| `CBConnectionSocketPortInstance` | `ihsm.Port<typeof CBConnectionTop>` — `CBConnectionPort` (socket I/O) |
+| `CBConnectionWriterPort` | Delegates `write` to the connection socket port |
+
+**Invariant modules** (`*Invariants.ts`) implement checks; each state class documents *why* the invariant exists and *what it guarantees* in prose on `_checkInvariant()` (not field tables). Handlers call `this._checkInvariant()` at entry. `onEntry` ends with the same `inv.assertXxx(this.ctx)` call (not `this._checkInvariant()` — ihsm may still be on the source leaf during transition). Child state invariants extend parent chains in `*Invariants.ts` (e.g. `assertStopped` calls `assertProcessDetached`).
+
+## Handler APIs (0.1.1)
+
+- `this.hsm.transition(StateClass)` — not `this.transition()`
+- `this.notify.event()` / `this.notifyNow.event()` — not `post` / `postNow`
+- `this.hsm.port.spawn()` / `setTimeout()` — not `this.port` on handlers
+- `this.hsm.currentStateName` / `this.hsm.currentState`
+- Services return `Promise<T>` or throw — no `ResolveCallback` / `RejectCallback`
+- `makeActor` returns `ExternalActor`; child subactors use `makeChildActor(asParentActor(this), …)` with `child.parent` on the handle
+- Command transport: TCP via `CBConnectionPort` on `CBConnectionTop`; `doSpawnTcpChildren` spawns `cbreader` / `cbwriter` in a handler
+- Supervisor `CBServerPort`: `spawn`, `kill`, `awaitTcpListen` — log readers and connections spawned in actor handlers (`doSpawnLogReaders`, `createConnection`)
+- Clients use `createConnection` + `CBConnectionHandle` (`tell`/`ask`/…); actor uses sync `notifications.dispatch*` + external `waitForCommandAnswer(ctx)`
+- Production ports: `this.actor.notify.onSpawn()` — not `inbound.post`
+- Parent forwards to child: `child.notify.onData(chunk)` / `child.notify.interrupt()` — not `call` for void child commands
+- `await child.call.initialize()` then `await waitForConnectionBootstrap(ctx)` — **never** await bootstrap inside `initialize()` (ihsm RTC)
+- `ctx.connectionMailbox = this.hsm.port.actor` in `initialize`
+- **State invariants:** documented on each state's `_checkInvariant()`; implemented in `*Invariants.ts` via chained `assertXxx` (child asserts call parent asserts). Handlers use `this._checkInvariant()`; `onEntry` uses `inv.assertXxx(this.ctx)` directly. Teardown handlers (`doFinalizeClose`, `doBreakTransport`) skip strict leaf invariants.
+
+## IPC catalog (`cbIpcCatalog.ts`)
+
+Manual methods from `IpcSyntax.typ` / `Server-Interface.typ`: `TELL`, `UNTELL`, `TELL_MODEL`, `ASK`, `HYPO_ASK`, `ENROLL_ME`, `CANCEL_ME`, `NEXT_MESSAGE`, `STOP_SERVER`, `REPORT_CLIENTS`, `LPI_CALL`; extensions `RETELL`, `SET_MODULE_CONTEXT`, `GET_MODULE_CONTEXT`, `GET_MODULE_PATH`, `NOTIFICATION_REQUEST`. Completions: `ok`, `error`, `not_handled`, `notification`, `timeout`, `broken` (`CB_IPC_COMPLETIONS`).
+
+Environment event catalogs (source → port → `internalNotifications`):
+
+| Source | Constants | Wired notifications |
+|--------|-----------|-------------------|
+| `net.Socket` | `CB_NET_SOCKET_EVENTS` | `onSocketConnect`, `onSocketData`, `onSocketDrain`, `onSocketEnd`, `onSocketClose(hadError)`, `onSocketError`, `onSocketTimeout` |
+| `child_process` | `CB_CHILD_PROCESS_EVENTS` | `onSpawn`, `onProcessExit`, `onProcessClose`, `onProcessError`, `onDisconnect` |
+| stdio streams | `CB_STDIO_STREAM_EVENTS` | `onStdoutData`/`onStderrData`, `onStdoutEnd`/`onStderrEnd`, `onStdoutClose`/`onStderrClose`, `onStdoutStdioError`/`onStderrStdioError` |
+| IPC reader | spontaneous `notification` completion | `onReaderNotification` → `ctx.notificationQueue` while idle |
+
+Spontaneous `notification` ipcanswers are drained in `ReaderIdle`; during `ReaderAwaiting` they are forwarded without completing the active request. `timeout`/`broken` completions fail the active request via `doReadComplete`.
+
+**TCP framing** (asymmetric request/response wire format): see `cbserver-tcp-framing.mdc`.
+
+## Allowed in public protocol
+
+| Kind | Examples | Posted by |
+|------|----------|-----------|
+| **Commands** (`notifications`) | `start()`, `stop()`, `close()`, `dispatchTell()`, … | Clients (`CBConnectionHandle`, tests) |
+| **Queries** (`services` / `call`) | `initialize`, `getConnectionId`, `createConnection` | Clients — never `call` / `sync` inside state handlers |
+| **Environment `on*`** (`internalNotifications`) | See catalogs above; reader/writer children: `onData`, `onEnd`, `onStreamClose`, `onStreamError`, `onAnswerReady` | Outside world only (subprocess, network, child actors) |
+
+## Forbidden in public protocol
+
+- Internal scheduling glue (`doSpawnLogReaders`, `doSpawnTcpChildren`, `doProcessNext`, … belong in `internalNotifications`)
+- Port method names on the protocol (those belong on `Config.port` / `Port` subclass)
+- Stream dispatch `if (stream === "stdout")` in shared handlers — use separate `onStdout*` / `onStderr*` notifications
+- Awaiting command/close/bootstrap promises inside actor `services` handlers (blocks RTC)
+
+## Handler placement
+
+- **Top state** — services only on leaves that handle them. No environment `on*` on root unless inherited.
+- **Omit** a protocol method on a state to inherit from parent.
+- Shared subprocess IO → `ProcessActive` with separate stdout/stderr handlers; lifecycle → leaf states (`Starting`, `Stopping`, …).
+- Connection queue drain → `ConnectionTransport`; enrolled session → `ConnectionSession` / `ConnectionIdle`.
+
+## State classes (Node servers)
+
+- Mark initial leaf with `@ihsm.InitialState` on the state class.
+- Register the top state **before** descendants: `ihsm.registerStateNames({ CBServerTop }); ihsm.registerStateNames(self);`
+- Enable `experimentalDecorators` in package `tsconfig.json`.
+
+```typescript
+// ✅ GOOD — empty top state in Config file (CBServerConfig.ts)
+export class CBServerTop extends ihsm.TopState<CBServerMachineConfig> {
+  protected _checkInvariant(): void {}
+}
+
+// CBServerActor.ts — concrete states extend the config top
+import { CBServerTop } from "./CBServerConfig";
+import * as self from "./CBServerActor";
+ihsm.registerStateNames({ CBServerTop });
+ihsm.registerStateNames(self);
+```

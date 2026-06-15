@@ -1,0 +1,42 @@
+{
+  "name": "@mmkit/server",
+  "version": "0.2.0",
+  "private": true,
+  "license": "BSD-2-Clause",
+  "main": "./dist/server.js",
+  "bin": {
+    "mmkit-server": "./dist/server.js"
+  },
+  "scripts": {
+    "pregenerate": "node ../../../tools/generate-cbserver-settings-meta.mjs",
+    "prebuild": "npm run pregenerate",
+    "build": "node esbuild.mjs",
+    "test": "rm -rf out-test && tsc -p test/cbserver/tsconfig.json && mocha 'out-test/test/cbserver/**/*.test.js' --ignore 'out-test/test/cbserver/**/*.real.test.js'",
+    "test:cbserver:real": "node scripts/run-with-timeout.mjs 120000 bash scripts/run-cbserver-real-tests.sh",
+    "test:cbserver:real:one": "bash scripts/test-cbserver-real-one-by-one.sh",
+    "test:cbserver:kill": "bash scripts/kill-cbserver-orphans.sh",
+    "test:all": "npm run test",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@mmkit/shared": "0.2.0",
+    "@modelcontextprotocol/express": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/node": "^2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "^2.0.0-alpha.2",
+    "express": "^5.2.1",
+    "ihsm": "^0.1.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/express": "^5.0.6",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "chai": "^4.5.0",
+    "esbuild": "^0.25.0",
+    "js-yaml": "^4.2.0",
+    "mocha": "^10.8.2",
+    "typescript": "^5.7.0"
+  }
+}

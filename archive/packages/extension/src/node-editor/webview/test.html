@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="./main.css" />
+  <title>Slug render test</title>
+</head>
+<body>
+  <header class="toolbar">
+    <span class="title">ConceptBase Browser</span>
+    <span class="credit">Slug GPU text — Eric Lengyel (public domain)</span>
+  </header>
+  <canvas id="canvas"></canvas>
+  <footer class="footer">
+    <div id="status" class="status" role="status"></div>
+    <div id="fps" class="fps" aria-live="polite">— fps</div>
+  </footer>
+  <script>
+    window.__MMKIT_NODE_EDITOR__ = {
+      hbWasm: new URL("./hb.wasm", window.location.href).href,
+      font: new URL("./Inter-Regular.woff", window.location.href).href,
+      greeting: "Hello World"
+    };
+  </script>
+  <script src="./main.js"></script>
+</body>
+</html>

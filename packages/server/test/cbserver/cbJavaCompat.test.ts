@@ -1,0 +1,50 @@
+/// <reference types="mocha" />
+import { expect } from "chai";
+import { IpcAnswer } from "../../src/cbserver/shared/CBServerDefs";
+import {
+  collectErrorReports,
+  mergeCbAnswers,
+  normalizeAskNilResult,
+  replaceCrLf,
+  tellTransactions,
+} from "../../src/cbserver/actors/connection/cbJavaCompat";
+
+describe("cbJavaCompat", () => {
+  it("replaceCrLf normalizes MS-DOS line endings", () => {
+    expect(replaceCrLf("a\r\nb")).to.equal("a\nb");
+  });
+
+  it("tellTransactions splits on {---}", async () => {
+    const chunks: string[] = [];
+    const answer = await tellTransactions(async (frames) => {
+      chunks.push(frames);
+      return new IpcAnswer("", true, "ok", "yes");
+    }, "first{---}second");
+    expect(chunks).to.deep.equal(["first", "second"]);
+    expect(answer.ok).to.equal(true);
+  });
+
+  it("mergeCbAnswers keeps worst completion", () => {
+    const ok = new IpcAnswer("", true, "ok", "yes");
+    const error = new IpcAnswer("", false, "error", "no");
+    const merged = mergeCbAnswers(ok, error);
+    expect(merged.completion).to.equal("error");
+  });
+
+  it("collectErrorReports drains ERROR_REPORT queue", async () => {
+    const queue = [
+      new IpcAnswer("", true, "ok", 'ipcmessage("s","r",ERROR_REPORT,["first"]).'),
+      new IpcAnswer("", true, "ok", 'ipcmessage("s","r",ERROR_REPORT,["second"]).'),
+      new IpcAnswer("", true, "ok", "empty_queue"),
+    ];
+    const why = await collectErrorReports(async () => queue.shift()!);
+    expect(why.result).to.equal("firstsecond");
+  });
+
+  it("normalizeAskNilResult maps nil to empty string for FRAME/LABEL", () => {
+    const nil = new IpcAnswer("", true, "ok", "nil");
+    expect(normalizeAskNilResult(nil, "FRAME").result).to.equal("");
+    expect(normalizeAskNilResult(nil, "LABEL").result).to.equal("");
+    expect(normalizeAskNilResult(nil, "default").result).to.equal("nil");
+  });
+});

@@ -1,0 +1,569 @@
+{
+  "name": "mmkit",
+  "displayName": "Metamodelling Kit",
+  "description": "ConceptBase metamodelling toolkit for VS Code — cbserver lifecycle, LSP, and MM notebooks.",
+  "version": "0.1.0",
+  "publisher": "conceptbase",
+  "license": "BSD-2-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.com/mjeu/conceptbasecc"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "enabledApiProposals": [
+    "extensionRuntime"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "conceptbase",
+    "telos",
+    "metamodelling"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:conceptbase",
+    "onNotebook:mmkit.conceptbase-notebook",
+    "onCustomEditor:mmkit.nodeEditor",
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "sync-contributes": "tsx scripts/sync-contributes.ts",
+    "build": "npm run sync-contributes && node esbuild.mjs && npm run copy-server && npm run copy-node-editor-assets",
+    "compile-slug-shaders": "node scripts/compile-slug-shaders.mjs",
+    "verify-slug-render": "node scripts/verify-slug-render.mjs",
+    "copy-node-editor-assets": "node scripts/copy-node-editor-assets.mjs",
+    "copy-server": "node scripts/copy-server.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "test": "rm -rf out-test && tsc -p tsconfig.test.json && mocha",
+    "test:coverage": "rm -rf out-test && tsc -p tsconfig.test.json && c8 --include 'out-test/src/actors/**/*.js' --exclude '**/*.test.js' --reporter=text-summary --reporter=text mocha",
+    "test:integration": "npm run build && tsc -p tsconfig.integration.json && tsx test-integration/runTest.ts",
+    "check": "tsc -p tsconfig.json --noEmit && npm test",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@mmkit/shared": "0.1.0",
+    "harfbuzzjs": "^0.4.15",
+    "ihsm": "^0.0.21",
+    "three-text": "^0.6.3",
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@types/vscode": "^1.75.0",
+    "@vscode/test-electron": "^2.4.1",
+    "c8": "^10.1.3",
+    "chai": "^4.5.0",
+    "esbuild": "^0.25.0",
+    "glob": "^11.0.1",
+    "mocha": "^10.8.2",
+    "playwright-core": "^1.60.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.0"
+  },
+  "contributes": {
+    "configuration": [
+      {
+        "title": "Metamodelling Kit",
+        "order": 0,
+        "properties": {
+          "mmkit.operationalMode": {
+            "type": "string",
+            "default": "internalServer",
+            "description": "Whether mmkit manages a local cbserver, connects as a TCP client, or stays idle.",
+            "enum": [
+              "none",
+              "internalServer",
+              "client"
+            ]
+          },
+          "mmkit.traceLevel": {
+            "type": "string",
+            "default": "trace",
+            "description": "Minimum OTEL severity for MMKit Trace output and ihsm state-machine tracing.",
+            "enum": [
+              "trace",
+              "debug",
+              "info",
+              "warn",
+              "error",
+              "off"
+            ]
+          },
+          "mmkit.languageServer.trace": {
+            "type": "string",
+            "default": "off",
+            "description": "Trace LSP messages to the MMKit Trace output channel.",
+            "enum": [
+              "off",
+              "messages",
+              "verbose"
+            ]
+          },
+          "mmkit.languageServer.lspPort": {
+            "type": "number",
+            "default": 16011,
+            "description": "Host TCP port for the ConceptBase language server."
+          },
+          "mmkit.languageServer.httpPort": {
+            "type": "number",
+            "default": 28080,
+            "description": "Host HTTP port for LSP health, readiness, Prometheus metrics, and MCP (/mcp)."
+          }
+        }
+      },
+      {
+        "title": "Server",
+        "order": 1,
+        "properties": {
+          "mmkit.server.autoStartup": {
+            "type": "boolean",
+            "default": true,
+            "description": "Start the internal cbserver automatically when configuration is valid."
+          },
+          "mmkit.server.launchKind": {
+            "type": "string",
+            "default": "executable",
+            "description": "Run cbserver as a local binary or inside Docker.",
+            "enum": [
+              "executable",
+              "docker"
+            ]
+          },
+          "mmkit.server.executablePath": {
+            "type": "string",
+            "default": "cbserver",
+            "description": "Path to the cbserver binary."
+          },
+          "mmkit.server.dockerImage": {
+            "type": "string",
+            "default": "conceptbase-cbserver:0.1.1",
+            "description": "Container image reference for Docker launch."
+          },
+          "mmkit.server.dockerContainerName": {
+            "type": "string",
+            "default": "mmkit-cbserver",
+            "description": "Fixed name for the cbserver container."
+          },
+          "mmkit.server.dockerExtraRunArgs": {
+            "type": "array",
+            "default": [],
+            "description": "Additional docker run arguments."
+          },
+          "mmkit.server.dataDir": {
+            "type": "string",
+            "default": "~/.mmkit",
+            "description": "Base directory for mmkit-owned cbserver data (~/.mmkit).",
+            "scope": "application"
+          },
+          "mmkit.server.port": {
+            "type": "number",
+            "default": 4001,
+            "description": "Port cbserver listens on."
+          },
+          "mmkit.server.updateMode": {
+            "type": "string",
+            "default": "persistent",
+            "description": "persistent or nonpersistent database updates."
+          },
+          "mmkit.server.databasePath": {
+            "type": "string",
+            "default": "",
+            "description": "Persistent database directory."
+          },
+          "mmkit.server.databaseAllPath": {
+            "type": "string",
+            "default": "",
+            "description": "Combined database workspace path (default: dataDir/workspace)."
+          },
+          "mmkit.server.newDatabasePath": {
+            "type": "string",
+            "default": "",
+            "description": "Create a new database at this path on start."
+          },
+          "mmkit.server.resetOnStart": {
+            "type": "boolean",
+            "default": false,
+            "description": "Use -new instead of -d for databasePath."
+          },
+          "mmkit.server.tmpDir": {
+            "type": "string",
+            "default": "",
+            "description": "TMPDIR for nonpersistent session copies (default: dataDir/tmp)."
+          },
+          "mmkit.server.loadDir": {
+            "type": "string",
+            "default": "",
+            "description": "Module load directory (-load, default: dataDir/load)."
+          },
+          "mmkit.server.saveDir": {
+            "type": "string",
+            "default": "",
+            "description": "Module save directory (-save)."
+          },
+          "mmkit.server.viewsDir": {
+            "type": "string",
+            "default": "",
+            "description": "Materialized views directory (-views)."
+          },
+          "mmkit.server.traceMode": {
+            "type": "string",
+            "default": "",
+            "description": "Diagnostic trace level (-t)."
+          },
+          "mmkit.server.untellMode": {
+            "type": "string",
+            "default": "",
+            "description": "Untell behaviour (-U)."
+          },
+          "mmkit.server.cacheMode": {
+            "type": "string",
+            "default": "",
+            "description": "Query cache mode (-c)."
+          },
+          "mmkit.server.cacheSize": {
+            "type": "string",
+            "default": "",
+            "description": "Query cache size (-cs)."
+          },
+          "mmkit.server.optimizerMode": {
+            "type": "string",
+            "default": "",
+            "description": "Optimizer mode (-o)."
+          },
+          "mmkit.server.viewsMaintenance": {
+            "type": "string",
+            "default": "",
+            "description": "View maintenance mode (-v)."
+          },
+          "mmkit.server.restartDelaySeconds": {
+            "type": "string",
+            "default": "",
+            "description": "Auto-restart delay after crash (-r)."
+          },
+          "mmkit.server.securityLevel": {
+            "type": "string",
+            "default": "",
+            "description": "Security level (-s)."
+          },
+          "mmkit.server.maxErrors": {
+            "type": "string",
+            "default": "",
+            "description": "Maximum errors before stop."
+          },
+          "mmkit.server.adminUser": {
+            "type": "string",
+            "default": "",
+            "description": "Administrator user name."
+          },
+          "mmkit.server.multiUser": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable multi-user access."
+          },
+          "mmkit.server.moduleSeparator": {
+            "type": "string",
+            "default": "",
+            "description": "Module separator character."
+          },
+          "mmkit.server.moduleGeneration": {
+            "type": "string",
+            "default": "",
+            "description": "Module generation mode."
+          },
+          "mmkit.server.ccMode": {
+            "type": "string",
+            "default": "",
+            "description": "ConceptBase compatibility mode."
+          },
+          "mmkit.server.maxCost": {
+            "type": "string",
+            "default": "",
+            "description": "Maximum query cost."
+          },
+          "mmkit.server.pathLength": {
+            "type": "string",
+            "default": "",
+            "description": "Maximum path length."
+          },
+          "mmkit.server.iterMax": {
+            "type": "string",
+            "default": "",
+            "description": "Maximum iterations."
+          },
+          "mmkit.server.ecaMode": {
+            "type": "string",
+            "default": "",
+            "description": "ECA rule mode."
+          },
+          "mmkit.server.ecaOptimizer": {
+            "type": "string",
+            "default": "",
+            "description": "ECA optimizer setting."
+          },
+          "mmkit.server.ruleLabels": {
+            "type": "string",
+            "default": "",
+            "description": "Rule label configuration."
+          },
+          "mmkit.server.inactivityHours": {
+            "type": "string",
+            "default": "",
+            "description": "Shutdown after inactivity hours."
+          },
+          "mmkit.server.serverMode": {
+            "type": "string",
+            "default": "",
+            "description": "cbserver operating mode."
+          },
+          "mmkit.server.stratificationMode": {
+            "type": "string",
+            "default": "",
+            "description": "Stratification mode."
+          },
+          "mmkit.server.devCommand": {
+            "type": "string",
+            "default": "",
+            "description": "Override launch command for development."
+          },
+          "mmkit.server.extraArgs": {
+            "type": "array",
+            "default": [],
+            "description": "Additional cbserver CLI arguments."
+          }
+        }
+      },
+      {
+        "title": "Client",
+        "order": 2,
+        "properties": {
+          "mmkit.client.host": {
+            "type": "string",
+            "default": "127.0.0.1",
+            "description": "Hostname or IP of the remote cbserver."
+          },
+          "mmkit.client.port": {
+            "type": "number",
+            "default": 4001,
+            "description": "TCP port of the remote cbserver."
+          },
+          "mmkit.client.toolName": {
+            "type": "string",
+            "default": "mmkit",
+            "description": "Tool name sent during ENROLL_ME."
+          },
+          "mmkit.client.userName": {
+            "type": "string",
+            "default": "user",
+            "description": "User name sent during ENROLL_ME."
+          },
+          "mmkit.client.connectTimeoutMs": {
+            "type": "number",
+            "default": 10000,
+            "description": "TCP connect and enroll timeout."
+          },
+          "mmkit.client.autoConnect": {
+            "type": "boolean",
+            "default": false,
+            "description": "Connect automatically when operational mode is client."
+          },
+          "mmkit.client.autoReconnect": {
+            "type": "boolean",
+            "default": true,
+            "description": "Reconnect after connection loss."
+          },
+          "mmkit.client.reconnectBackoffMs": {
+            "type": "number",
+            "default": 2000,
+            "description": "Delay before reconnect attempts."
+          }
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "mmkit.startServer",
+        "title": "Start mmkit server",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.stopServer",
+        "title": "Stop mmkit server",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.connect",
+        "title": "Connect to mmkit server",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.disconnect",
+        "title": "Disconnect from mmkit server",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.openSettings",
+        "title": "Open mmkit Settings",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.showTrace",
+        "title": "Show MMKit Trace",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.connectionTest",
+        "title": "Test cbserver Connection (ASK)",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.newNotebook",
+        "title": "New MM Notebook",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.openNodeEditor",
+        "title": "Open Node Editor",
+        "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.restartLanguageServer",
+        "title": "Restart ConceptBase Language Server",
+        "category": "Metamodelling Kit"
+      }
+    ],
+    "languages": [
+      {
+        "id": "conceptbase",
+        "aliases": [
+          "ConceptBase",
+          "CBL",
+          "Telos"
+        ],
+        "extensions": [
+          ".cbs"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "conceptbase",
+        "scopeName": "source.conceptbase",
+        "path": "./syntaxes/conceptbase.tmLanguage.json"
+      }
+    ],
+    "notebooks": [
+      {
+        "type": "mmkit.conceptbase-notebook",
+        "displayName": "MM Notebook",
+        "selector": [
+          {
+            "filenamePattern": "*.mmnb"
+          }
+        ]
+      }
+    ],
+    "notebookCell": [
+      {
+        "type": "code",
+        "language": "conceptbase",
+        "notebook": "mmkit.conceptbase-notebook"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mmkit",
+          "title": "Metamodelling Kit",
+          "icon": "media/mmkit.svg"
+        }
+      ]
+    },
+    "views": {
+      "mmkit": [
+        {
+          "id": "mmkit.panel",
+          "name": "MMKit",
+          "type": "webview"
+        }
+      ]
+    },
+    "semanticTokenTypes": [
+      {
+        "id": "macro",
+        "superType": "string",
+        "description": "MSFOL / ECArule assertion embedding"
+      },
+      {
+        "id": "operator",
+        "description": "Assertion delimiters and operators"
+      }
+    ],
+    "semanticTokenModifiers": [
+      {
+        "id": "defaultLibrary",
+        "description": "Built-in functor or literal"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "conceptbase",
+        "scopes": {
+          "keyword": [
+            "keyword.control.conceptbase",
+            "keyword.other.conceptbase"
+          ],
+          "function": [
+            "entity.name.function.conceptbase"
+          ],
+          "function.defaultLibrary": [
+            "support.function.conceptbase"
+          ],
+          "variable": [
+            "variable.other.conceptbase"
+          ],
+          "string": [
+            "string.quoted.double.conceptbase"
+          ],
+          "number": [
+            "constant.numeric.conceptbase"
+          ],
+          "comment": [
+            "comment.line.conceptbase",
+            "comment.block.conceptbase"
+          ],
+          "macro": [
+            "meta.embedded.line.conceptbase"
+          ],
+          "operator": [
+            "punctuation.section.embedded.begin.conceptbase"
+          ]
+        }
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "mmkit.nodeEditor",
+        "displayName": "ConceptBase Browser",
+        "selector": [
+          {
+            "scheme": "mmkit-node"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  }
+}

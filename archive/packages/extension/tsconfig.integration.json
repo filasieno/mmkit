@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "out-test-integration",
+    "module": "commonjs",
+    "esModuleInterop": true
+  },
+  "include": [
+    "test-integration/**/*.ts",
+    "src/config/schema.ts",
+    "src/types.ts",
+    "src/extension.ts",
+    "src/lsp/**/*.ts"
+  ]
+}

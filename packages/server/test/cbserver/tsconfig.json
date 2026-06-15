@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "outDir": "../../out-test",
+    "incremental": true,
+    "tsBuildInfoFile": "../../out-test/cbserver/.tsbuildinfo",
+    "types": ["node", "mocha"],
+    "paths": {
+      "ihsm/testing": ["../../node_modules/ihsm/lib/cjs/testing.d.ts"]
+    }
+  },
+  "include": ["../../src/cbserver/**/*.ts", "./**/*.ts"]
+}

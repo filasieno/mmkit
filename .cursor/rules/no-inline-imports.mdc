@@ -1,0 +1,43 @@
+---
+description: No inline import() type syntax — use top-level import type
+globs: packages/**/*.ts
+alwaysApply: false
+---
+
+# No inline imports
+
+**Never** use inline `import("…").Type` in type positions. Always add a top-level
+`import type { … } from "…"` (or `import { … }` for values).
+
+This applies to interfaces, method signatures, casts, function parameters, and return types.
+Do **not** use inline imports to break circular dependencies — restructure modules or use a
+shared types file instead.
+
+```typescript
+// ✅ GOOD
+import type { CBConnectionActor } from "./CBServerConnectionConfig";
+import type { ICBConnectionContext } from "./CBServerConnectionContext";
+
+spawnConnection(
+  parent: ihsm.ParentActor<typeof CBServerTop>,
+  context: ICBConnectionContext,
+): Promise<CBConnectionActor>;
+
+// ❌ BAD — inline import in a type position
+spawnConnection(
+  parent: ihsm.ParentActor<typeof CBServerTop>,
+  context: import("./CBServerConnectionContext").ICBConnectionContext,
+): Promise<import("./CBServerConnectionConfig").CBConnectionActor>;
+```
+
+Side-effect-only loads use a normal import at file top (not inline):
+
+```typescript
+// ✅ GOOD — named import loads the module; satisfies registerStateNames side effects
+import { ConnectionUninitialized } from "../CBServerConnectionActor";
+
+// ❌ BAD — bare side-effect path without a typed import when symbols are needed nearby
+import "../CBServerConnectionActor";
+```
+
+Dynamic `await import("…")` for code splitting is out of scope unless the user explicitly asks for it.

@@ -1,0 +1,9 @@
+{
+  "mmkitVersion": 1,
+  "cells": [
+    {
+      "id": "cell-1",
+      "value": "frame\n  in\n    name / \"Notebook\";\n  end"
+    }
+  ]
+}

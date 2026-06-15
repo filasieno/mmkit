@@ -1,0 +1,78 @@
+---
+description: Prefer named methods in classes where fields carry context
+globs: packages/**/*.ts
+alwaysApply: false
+---
+
+# Named class methods over anonymous closures
+
+When a set of functions share **context** (state they close over), express that context as **class
+fields** and each behaviour as a **named method** — not as anonymous functions capturing local
+variables.
+
+## Why
+
+- Stack traces and profiler output show the method name, not `async` or `<anonymous>`.
+- Cross-cutting injection (logging, tracing, timing) is a one-line edit inside the named method.
+- Fields make context explicit; closures hide it.
+- Tests can subclass or mock at the method boundary.
+
+## Pattern — class with context fields
+
+```typescript
+// ✅ preferred
+export class CbToolRegistry {
+  private readonly session: CbMcpSession;
+
+  constructor(supervisor: ServerSupervisor) {
+    this.session = new CbMcpSession(supervisor);
+  }
+
+  async tell(raw: unknown) {
+    const args = requireObject(raw, "cb_tell");
+    const client = await this.session.getClient();
+    return client.tell(await requireValidFrames(args, "frames"));
+  }
+}
+
+// ❌ avoid — session captured in closure
+function registerCbTools(server: McpServer, supervisor: ServerSupervisor) {
+  const session = new CbMcpSession(supervisor);
+  server.registerTool("cb_tell", meta, async (raw) => {
+    const client = await session.getClient(); // invisible capture
+    return client.tell(...);
+  });
+}
+```
+
+## Pattern — registration wires names to methods
+
+```typescript
+register(server: McpServer): void {
+  server.registerTool("cb_tell", TOOL_TELL, (raw) => this.tell(raw));
+  server.registerTool("cb_ask",  TOOL_ASK,  (raw) => this.ask(raw));
+}
+```
+
+The thin `(raw) => this.method(raw)` adapters in `register()` are acceptable — they carry no
+context and exist only to bind `this`.
+
+## When to use a plain function instead
+
+Plain functions are fine when there is **no shared state** to capture:
+
+- Pure validators: `requireString`, `requireObject`, …
+- Pure transformers: `jsonText`, `validationResponse`, …
+- Module-level utilities with no closure: `guardedTool`, `parseAnswerTerm`, …
+
+## Field naming
+
+Context fields should be `private readonly`. Name them after what they represent, not how they were
+constructed: `this.session`, `this.supervisor`, `this.ports` — not `this.s`, `this.sess`.
+
+## Applying this rule
+
+When you add a new feature that needs context (e.g. OTEL tracer, logger, config):
+
+1. Add the dependency as a constructor parameter + `private readonly` field.
+2. Use it directly inside named methods — no wrapper closures needed.

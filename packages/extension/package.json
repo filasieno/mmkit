@@ -1,0 +1,54 @@
+{
+  "name": "mmkit",
+  "displayName": "Metamodelling Kit",
+  "description": "ConceptBase metamodelling toolkit for VS Code.",
+  "version": "0.2.0",
+  "publisher": "conceptbase",
+  "license": "BSD-2-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.com/mjeu/conceptbasecc"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "test": "rm -rf out-test && tsc -p tsconfig.test.json && mocha 'out-test/test/**/*.test.js'",
+    "test:integration": "npm run build && tsc -p tsconfig.integration.json && tsx test-integration/runTest.ts",
+    "check": "tsc -p tsconfig.json --noEmit && npm test",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "@mmkit/shared": "0.2.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.75.0",
+    "@vscode/test-electron": "^2.4.1",
+    "chai": "^4.5.0",
+    "esbuild": "^0.25.0",
+    "mocha": "^10.8.2",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.0"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "mmkit.helloWorld",
+        "title": "Hello World",
+        "category": "Metamodelling Kit"
+      }
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "nodes": {
+    "conceptbase-cc": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1781525632,
+        "narHash": "sha256-G50CNn5xLrqE9g4xxibsgv3ovbVtsz25wjlZLnRGLF4=",
+        "owner": "filasieno",
+        "repo": "conceptbase-cc",
+        "rev": "8f88183f6ad19d675ff67c9b5c56154c185245dd",
+        "type": "github"
+      },
+      "original": {
+        "owner": "filasieno",
+        "repo": "conceptbase-cc",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1781359544,
+        "narHash": "sha256-iUuzKQcyXvopYDDzFpMK5eQKP3WIJExYny2kJtbgUcE=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "9f11f828c213641c2369a9f1fa31fe31557e3156",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "conceptbase-cc": "conceptbase-cc",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

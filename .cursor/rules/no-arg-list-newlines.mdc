@@ -1,0 +1,39 @@
+---
+description: Method and call argument lists stay on one line — no newlines after `(`
+globs: packages/**/*.ts
+alwaysApply: false
+---
+
+# No newlines in argument lists
+
+**Method declarations**, **function declarations**, and **calls** must keep the full parameter /
+argument list on **one line**. Do not break after `(` onto the next line.
+
+Enforced by ESLint (`@stylistic/function-paren-newline` and
+`@stylistic/function-call-argument-newline`, both `never`). Auto-fix: `npm run format`
+or format-on-save with the ESLint extension (`dbaeumer.vscode-eslint`).
+
+```typescript
+// ✅ GOOD
+async initialize(resolve: ihsm.ResolveCallback<void>, reject: ihsm.RejectCallback, port: CBServerPort): Promise<void> {
+  …
+}
+
+const { pid, subscription } = await port.spawn(spec, mailbox, listenOptions);
+
+// ❌ BAD — parameter list broken across lines
+async initialize(
+  resolve: ihsm.ResolveCallback<void>,
+  reject: ihsm.RejectCallback,
+  port: CBServerPort
+): Promise<void> {
+
+// ❌ BAD — call arguments broken across lines
+await port.spawn(
+  spec,
+  mailbox,
+  listenOptions
+);
+```
+
+Long lines are acceptable; extract a local variable or helper instead of wrapping the argument list.
