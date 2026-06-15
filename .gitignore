@@ -3,6 +3,7 @@ out/
 out-test/
 out-test-integration/
 .vscode-test/
+coverage/
 *.vsix
 result
 result-*/
