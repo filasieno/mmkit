@@ -12,18 +12,7 @@ async function main(): Promise<void> {
   const extensionTestsPath = path.resolve(__dirname, "..", "out-test-integration", "test-integration", "suite", "index.js");
   const userDataDir = path.join(os.tmpdir(), `mmkit-vscode-test-${process.pid}`);
 
-  await runTests({
-    extensionDevelopmentPath,
-    extensionTestsPath,
-    launchArgs: [
-      "--disable-extensions",
-      "--disable-workspace-trust",
-      `--user-data-dir=${userDataDir}`,
-    ],
-  });
+  await runTests( { extensionDevelopmentPath, extensionTestsPath, launchArgs: [ "--disable-extensions", "--disable-workspace-trust", `--user-data-dir=${userDataDir}`, ], } );
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().catch( (err) => { console.error(err); process.exit(1); } );

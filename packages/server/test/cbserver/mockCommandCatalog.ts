@@ -10,13 +10,7 @@ export type MockDispatchActor = {
     dispatchRetell(untellFrames: string, tellFrames: string): void;
     dispatchTellModel(...files: string[]): void;
     dispatchAsk(query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): void;
-    dispatchHypoAsk(
-      frames: string,
-      query: string,
-      queryFormat?: string,
-      answerRep?: string,
-      rollbackTime?: string,
-    ): void;
+    dispatchHypoAsk( frames: string, query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string ): void;
     dispatchLpicall(lpiCall: string): void;
     dispatchProlog(statement: string): void;
     dispatchWhy(): void;

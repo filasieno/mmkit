@@ -15,25 +15,11 @@ export function startHttpApp(port: number, options: HttpAppOptions): HttpServer 
 
   app.use(express.json({ limit: "4mb" }));
 
-  app.get(["/healthz", "/health"], (_req: Request, res: Response) => {
-    res.type("text/plain").send("ok");
-  });
+  app.get( ["/healthz", "/health"], (_req: Request, res: Response) => { res.type("text/plain").send("ok"); } );
 
-  app.get(["/readyz", "/ready"], (_req: Request, res: Response) => {
-    if (options.readiness.started) {
-      res.type("text/plain").send("ready");
-      return;
-    }
-    res.status(503).type("text/plain").send("not ready");
-  });
+  app.get( ["/readyz", "/ready"], (_req: Request, res: Response) => { if (options.readiness.started) { res.type("text/plain").send("ready"); return; } res.status(503).type("text/plain").send("not ready"); } );
 
-  app.post("/mcp", async (req: Request, res: Response) => {
-    const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    await options.mcpServer.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  });
+  app.post( "/mcp", async (req: Request, res: Response) => { const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await options.mcpServer.connect(transport); await transport.handleRequest(req, res, req.body); } );
 
-  return app.listen(port, "0.0.0.0", () => {
-    options.readiness.started = true;
-  });
+  return app.listen( port, "0.0.0.0", () => { options.readiness.started = true; } );
 }

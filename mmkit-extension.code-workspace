@@ -13,8 +13,8 @@
       "path": "packages/server"
     },
     {
-      "name": "shared",
-      "path": "packages/shared"
+      "name": "base",
+      "path": "packages/base"
     }
   ],
   "settings": {

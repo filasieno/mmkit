@@ -1,10 +1,9 @@
 import * as ihsm from "ihsm";
-import type { CBConnectionSocketWrite } from "../connection/CBConnectionPort";
-import { CBConnectionWriterTop } from "./CBConnectionWriterConfig";
+import type { CBConnectionWriterTop } from "./CBConnectionWriterConfig";
 
-/** Delegates `write` to the connection socket port. */
+/** Delegates `write` to the channel socket port. */
 export class CBConnectionWriterPort extends ihsm.Port<typeof CBConnectionWriterTop> {
-  constructor(private readonly socket: CBConnectionSocketWrite) {
+  constructor(private readonly socket: { write(buffer: Buffer): Promise<void> }) {
     super();
   }
 

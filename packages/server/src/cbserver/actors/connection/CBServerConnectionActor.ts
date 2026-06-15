@@ -1,17 +1,13 @@
 import * as ihsm from "ihsm";
-import { encodeCbString } from "@mmkit/shared/dist/cb-tcp";
+import { encodeCbString } from "@mmkit/base";
 import type { CBAnswer } from "../../shared/CBServerDefs";
-import { CBConnectionTop, type CBConnectionActorRef } from "./CBServerConnectionConfig";
-import {
-  CBCommandChannelContext,
-  waitForCommandChannelBootstrap,
-  waitForCommandChannelAnswer,
-} from "../commandChannel/CBCommandChannelContext";
-import {
-  CBNotificationChannelContext,
-  waitForNotificationChannelBootstrap,
-  waitForNotificationChannelAnswer,
-} from "../notificationChannel/CBNotificationChannelContext";
+import { CBConnectionTop } from "./CBServerConnectionConfig";
+import type { CBConnectionActorRef } from "./CBServerConnectionConfig";
+import type { CBCommandChannelActor, CBCommandChannelPortInput } from "../commandChannel/CBCommandChannelConfig";
+import type { CBNotificationChannelActor, CBNotificationChannelPortInput } from "../notificationChannel/CBNotificationChannelConfig";
+import type { ICBConnectionContext } from "./CBServerConnectionContext";
+import { CBCommandChannelContext, waitForCommandChannelBootstrap, waitForCommandChannelAnswer, } from "../commandChannel/CBCommandChannelContext";
+import { CBNotificationChannelContext, waitForNotificationChannelBootstrap, waitForNotificationChannelAnswer, } from "../notificationChannel/CBNotificationChannelContext";
 import { CBCommandChannelPort } from "../commandChannel/CBCommandChannelPort";
 import { CBNotificationChannelPort } from "../notificationChannel/CBNotificationChannelPort";
 import { cbTrace } from "../../shared/cbTrace";
@@ -33,7 +29,27 @@ import * as self from "./CBServerConnectionActor";
  * ```
  */
 
+@ihsm.InitialState
+export class ConnectionUninitialized extends CBConnectionTop {
+  /** @see {@link assertConnectionUninitialized} */
+  protected override _checkInvariant(): void {
+    inv.assertConnectionUninitialized(this.ctx);
+  }
+
+  async initialize(): Promise<void> {
+    this._checkInvariant();
+    this.hsm.transition(Connecting);
+  }
+}
+
 export class ConnectionBase extends CBConnectionTop {
+  /**
+   * Shared handlers for all connection states before a leaf overrides.
+   *
+   * **Known gap:** intentionally empty — leaf states must call `_checkInvariant()` in
+   * each handler. Prefer moving checks to leaves or delegating to
+   * {@link module:cbserver/actors/connection/CBServerConnectionInvariants}.
+   */
   protected override _checkInvariant(): void {}
 
   async getConnectionId(): Promise<string> {
@@ -78,13 +94,7 @@ export class ConnectionBase extends CBConnectionTop {
   dispatchAsk(_query: string, _queryFormat?: string, _answerRep?: string, _rollbackTime?: string): void {
     this.rejectCommand();
   }
-  dispatchHypoAsk(
-    _frames: string,
-    _query: string,
-    _queryFormat?: string,
-    _answerRep?: string,
-    _rollbackTime?: string,
-  ): void {
+  dispatchHypoAsk( _frames: string, _query: string, _queryFormat?: string, _answerRep?: string, _rollbackTime?: string ): void {
     this.rejectCommand();
   }
   dispatchLpicall(_lpiCall: string): void {
@@ -192,19 +202,8 @@ export class ConnectionBase extends CBConnectionTop {
   }
 }
 
-@ihsm.InitialState
-export class ConnectionUninitialized extends ConnectionBase {
-  protected override _checkInvariant(): void {
-    inv.assertConnectionUninitialized(this.ctx);
-  }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.hsm.transition(Connecting);
-  }
-}
-
 export class Connecting extends ConnectionBase {
+  /** @see {@link assertConnecting} */
   protected override _checkInvariant(): void {
     inv.assertConnecting(this.ctx);
   }
@@ -216,42 +215,29 @@ export class Connecting extends ConnectionBase {
 
   async doSpawnChannels(): Promise<void> {
     this._checkInvariant();
-    const orchestrator = this.ctx.orchestratorMailbox!;
-    const baseTool = this.ctx.tcp.toolName ?? "mmkit";
+    const orchestrator: CBConnectionActorRef = this.ctx.orchestratorMailbox!;
+    const parent: ihsm.ParentActor<typeof CBConnectionTop> = ihsm.asParentActor<typeof CBConnectionTop>(this);
+    const baseTool: string = this.ctx.tcp.toolName ?? "mmkit";
 
-    const commandCtx = new CBCommandChannelContext(
-      `${this.ctx.connectionId}:cmd`,
-      () => orchestrator.notify.onCommandChannelClosed(),
-      (message) => orchestrator.notify.onCommandChannelBroken(message),
-      { ...this.ctx.tcp, toolName: baseTool },
-    );
-    const notificationCtx = new CBNotificationChannelContext(
-      `${this.ctx.connectionId}:notif`,
-      () => orchestrator.notify.onNotificationChannelClosed(),
-      (message) => orchestrator.notify.onNotificationChannelBroken(message),
-      {
-        ...this.ctx.tcp,
-        toolName: `${baseTool}-notify`,
-        socketTimeoutMs: 0,
-      },
-    );
+    const commandCtx: CBCommandChannelContext = new CBCommandChannelContext(`${this.ctx.connectionId}:cmd`, () => orchestrator.notify.onCommandChannelClosed(), (message) => orchestrator.notify.onCommandChannelBroken(message), { ...this.ctx.tcp, toolName: baseTool },);
+    const notificationCtx: CBNotificationChannelContext = new CBNotificationChannelContext( `${this.ctx.connectionId}:notif`, () => orchestrator.notify.onNotificationChannelClosed(), (message) => orchestrator.notify.onNotificationChannelBroken(message), { ...this.ctx.tcp, toolName: `${baseTool}-notify`, socketTimeoutMs: 0, }, );
     this.ctx.commandCtx = commandCtx;
     this.ctx.notificationCtx = notificationCtx;
 
-    const commandPort = (this.ctx.channelPorts?.command ?? new CBCommandChannelPort(commandCtx.tcp)) as never;
-    const notificationPort = (this.ctx.channelPorts?.notification ?? new CBNotificationChannelPort(notificationCtx.tcp)) as never;
+    const commandPort: CBCommandChannelPortInput = this.ctx.channelPorts?.command ?? new CBCommandChannelPort(commandCtx.tcp);
+    const notificationPort: CBNotificationChannelPortInput = this.ctx.channelPorts?.notification ?? new CBNotificationChannelPort(notificationCtx.tcp);
 
-    const commandBootstrap = waitForCommandChannelBootstrap(commandCtx);
-    const notificationBootstrap = waitForNotificationChannelBootstrap(notificationCtx);
+    const commandBootstrap: Promise<void> = waitForCommandChannelBootstrap(commandCtx);
+    const notificationBootstrap: Promise<void> = waitForNotificationChannelBootstrap(notificationCtx);
 
     cbTrace("orchestrator:spawn-channels", { connectionId: this.ctx.connectionId });
 
     try {
-      const commandChannel = await this.hsm.port.spawnCommandChannel(orchestrator, commandCtx, commandPort);
+      const commandChannel: CBCommandChannelActor = await this.hsm.port.spawnCommandChannel(parent, commandCtx, commandPort);
       this.ctx.commandChannel = commandChannel;
       await commandBootstrap;
 
-      const notificationChannel = await this.hsm.port.spawnNotificationChannel(orchestrator, notificationCtx, notificationPort);
+      const notificationChannel: CBNotificationChannelActor = await this.hsm.port.spawnNotificationChannel(parent, notificationCtx, notificationPort);
       this.ctx.notificationChannel = notificationChannel;
       await notificationBootstrap;
 
@@ -259,13 +245,17 @@ export class Connecting extends ConnectionBase {
       this.ctx.bootstrapDone = undefined;
       this.hsm.transition(ConnectionIdle);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message: string = err instanceof Error ? err.message : String(err);
       this.notifyNow.doBreakTransport(message);
     }
   }
 }
 
 export class ConnectionIdle extends ConnectionBase {
+  /**
+   * Both channels enrolled — IPC bridge active.
+   * @see {@link assertConnectionIdle}
+   */
   protected override _checkInvariant(): void {
     inv.assertConnectionIdle(this.ctx);
   }
@@ -277,27 +267,15 @@ export class ConnectionIdle extends ConnectionBase {
   }
 
   private bridgeCommandAnswer(channelAnswer: Promise<CBAnswer>): void {
-    const waiter = this.ctx.pendingCommand!;
-    void channelAnswer.then(
-      (answer) => {
-        waiter.resolve(answer);
-        this.ctx.pendingCommand = undefined;
-        if (this.ctx.closed && !this.ctx.notificationChannelClosed) {
-          this.ctx.notificationChannel?.notify.close();
-        }
-      },
-      (err: Error) => {
-        waiter.reject(err);
-        this.ctx.pendingCommand = undefined;
-      },
-    );
+    const waiter: NonNullable<ICBConnectionContext["pendingCommand"]> = this.ctx.pendingCommand!;
+    void channelAnswer.then( (answer) => { waiter.resolve(answer); this.ctx.pendingCommand = undefined; if (this.ctx.closed && !this.ctx.notificationChannelClosed) { this.ctx.notificationChannel?.notify.close(); } }, (err: Error) => { waiter.reject(err); this.ctx.pendingCommand = undefined; }, );
   }
 
   dispatchTell(frames: string): void {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchTell(frames);
     this.bridgeCommandAnswer(answer);
   }
@@ -306,7 +284,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchUntell(frames);
     this.bridgeCommandAnswer(answer);
   }
@@ -315,7 +293,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchRetell(untellFrames, tellFrames);
     this.bridgeCommandAnswer(answer);
   }
@@ -324,7 +302,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchTellModel(...files);
     this.bridgeCommandAnswer(answer);
   }
@@ -333,7 +311,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchAsk(query, queryFormat, answerRep, rollbackTime);
     this.bridgeCommandAnswer(answer);
   }
@@ -342,7 +320,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchHypoAsk(frames, query, queryFormat, answerRep, rollbackTime);
     this.bridgeCommandAnswer(answer);
   }
@@ -351,7 +329,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchLpicall(lpiCall);
     this.bridgeCommandAnswer(answer);
   }
@@ -360,7 +338,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchProlog(statement);
     this.bridgeCommandAnswer(answer);
   }
@@ -369,7 +347,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchWhy();
     this.bridgeCommandAnswer(answer);
   }
@@ -378,7 +356,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchCd(modulePath);
     this.bridgeCommandAnswer(answer);
   }
@@ -387,7 +365,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchPwd();
     this.bridgeCommandAnswer(answer);
   }
@@ -396,7 +374,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchLm(modulePath);
     this.bridgeCommandAnswer(answer);
   }
@@ -405,7 +383,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchLs(className);
     this.bridgeCommandAnswer(answer);
   }
@@ -414,7 +392,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchMkdir(moduleName);
     this.bridgeCommandAnswer(answer);
   }
@@ -423,7 +401,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchWho();
     this.bridgeCommandAnswer(answer);
   }
@@ -432,7 +410,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchSub();
     this.bridgeCommandAnswer(answer);
   }
@@ -441,7 +419,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchShow(objectName);
     this.bridgeCommandAnswer(answer);
   }
@@ -450,7 +428,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchNextMessage(messageType);
     this.bridgeCommandAnswer(answer);
   }
@@ -460,7 +438,7 @@ export class ConnectionIdle extends ConnectionBase {
       throw new Error("no pending command waiter");
     }
     this.ctx.closed = true;
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchStopServer(password);
     this.bridgeCommandAnswer(answer);
   }
@@ -469,7 +447,7 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchReportClients();
     this.bridgeCommandAnswer(answer);
   }
@@ -478,8 +456,8 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingCommand === undefined) {
       throw new Error("no pending command waiter");
     }
-    const target = tool ?? this.ctx.notificationCtx!.getRawClientId();
-    const answer = waitForCommandChannelAnswer(this.ctx.commandCtx!);
+    const target: string = tool ?? this.ctx.notificationCtx!.getRawClientId();
+    const answer: Promise<CBAnswer> = waitForCommandChannelAnswer(this.ctx.commandCtx!);
     this.ctx.commandChannel!.notify.dispatchNotificationRequest(about, target);
     this.bridgeCommandAnswer(answer);
   }
@@ -488,23 +466,15 @@ export class ConnectionIdle extends ConnectionBase {
     if (this.ctx.pendingNotification === undefined) {
       throw new Error("no pending notification waiter");
     }
-    const channelAnswer = waitForNotificationChannelAnswer(this.ctx.notificationCtx!);
+    const channelAnswer: Promise<CBAnswer> = waitForNotificationChannelAnswer(this.ctx.notificationCtx!);
     this.ctx.notificationChannel!.notify.beginGetNotification(_timeoutMs);
-    const waiter = this.ctx.pendingNotification;
-    void channelAnswer.then(
-      (answer) => {
-        waiter.resolve(answer);
-        this.ctx.pendingNotification = undefined;
-      },
-      (err: Error) => {
-        waiter.reject(err);
-        this.ctx.pendingNotification = undefined;
-      },
-    );
+    const waiter: NonNullable<ICBConnectionContext["pendingNotification"]> = this.ctx.pendingNotification;
+    void channelAnswer.then( (answer) => { waiter.resolve(answer); this.ctx.pendingNotification = undefined; }, (err: Error) => { waiter.reject(err); this.ctx.pendingNotification = undefined; }, );
   }
 }
 
 export class ConnectionClosing extends ConnectionBase {
+  /** @see {@link assertConnectionClosing} */
   protected override _checkInvariant(): void {
     inv.assertConnectionClosing(this.ctx);
   }
@@ -525,6 +495,7 @@ export class ConnectionClosing extends ConnectionBase {
 }
 
 export class ConnectionTerminal extends ConnectionBase {
+  /** @see {@link assertConnectionTerminal} */
   protected override _checkInvariant(): void {
     inv.assertConnectionTerminal(this.ctx);
   }
@@ -539,6 +510,7 @@ export class ConnectionTerminal extends ConnectionBase {
 }
 
 export class ConnectionClosed extends ConnectionTerminal {
+  /** @see {@link assertConnectionClosed} */
   protected override _checkInvariant(): void {
     inv.assertConnectionClosed(this.ctx);
   }
@@ -549,6 +521,7 @@ export class ConnectionClosed extends ConnectionTerminal {
 }
 
 export class ConnectionBroken extends ConnectionTerminal {
+  /** @see {@link assertConnectionBroken} */
   protected override _checkInvariant(): void {
     inv.assertConnectionBroken(this.ctx);
   }

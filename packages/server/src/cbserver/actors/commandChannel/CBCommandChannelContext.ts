@@ -1,12 +1,7 @@
-import * as os from "node:os";
-import {
-  buildEnrollPayload,
-  buildIpcMessage,
-  decodeCbString,
-  lengthPrefix,
-} from "@mmkit/shared/dist/cb-tcp";
+import { buildEnrollPayload, buildIpcMessage, decodeCbString, lengthPrefix, } from "@mmkit/base";
 import type { CBAnswer } from "../../shared/CBServerDefs";
 import type { CBTcpConnectionOptions } from "../../shared/CBTcpOptions";
+import { enrollUserSuffix } from "../../shared/enrollUserSuffix";
 import type { CBConnectionReaderActor } from "../reader/CBConnectionReaderConfig";
 import type { CBConnectionWriterActor } from "../writer/CBConnectionWriterConfig";
 import { CB_IPC_METHODS } from "../../shared/cbIpcCatalog";
@@ -82,12 +77,7 @@ export class CBCommandChannelContext implements ICBCommandChannelContext {
   pendingCommand?: { resolve(answer: CBAnswer): void; reject(error: Error): void };
   pendingClose?: { resolve(): void; reject(error: Error): void };
 
-  constructor(
-    connectionId: string,
-    onChannelClosed: () => void,
-    onChannelBroken: (message: string) => void,
-    tcp: CBTcpConnectionOptions,
-  ) {
+  constructor( connectionId: string, onChannelClosed: () => void, onChannelBroken: (message: string) => void, tcp: CBTcpConnectionOptions ) {
     this.connectionId = connectionId;
     this.onChannelClosed = onChannelClosed;
     this.onChannelBroken = onChannelBroken;
@@ -99,7 +89,7 @@ export class CBCommandChannelContext implements ICBCommandChannelContext {
   }
 
   consumePendingCommand(): { resolve(answer: CBAnswer): void; reject(error: Error): void } {
-    const waiter = this.pendingCommand;
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } | undefined = this.pendingCommand;
     if (waiter === undefined) {
       throw new Error("no pending command waiter");
     }
@@ -120,7 +110,7 @@ export class CBCommandChannelContext implements ICBCommandChannelContext {
   allocEnrollCommand(): CommandPendingRequest {
     return {
       method: CB_IPC_METHODS.ENROLL_ME,
-      data: buildEnrollPayload(this.tcp.toolName ?? "mmkit", this.enrollUserSuffix()),
+      data: buildEnrollPayload(this.tcp.toolName ?? "mmkit", enrollUserSuffix(this.tcp.userName)),
       client: '""',
       server: '""',
       resolve: () => undefined,
@@ -128,30 +118,26 @@ export class CBCommandChannelContext implements ICBCommandChannelContext {
     };
   }
 
-  private enrollUserSuffix(): string {
-    const userName = this.tcp.userName ?? "mmkit";
-    return `${userName}@${os.hostname()}_${os.arch()}_${os.platform().replace(/\s/g, "")}`;
-  }
-
   buildIpcFrame(method: string, data: string, client = this.clientId, server = this.serverId): Buffer {
-    const message = buildIpcMessage(client, server, method, data);
+    const message: string = buildIpcMessage(client, server, method, data);
     return lengthPrefix(message);
   }
 
   rejectAllPending(message: string): void {
-    const queued = [...this.requestQueue];
-    const active = this.activeRequest;
+    const queued: CommandPendingRequest[] = [...this.requestQueue];
+    const active: CommandPendingRequest | undefined = this.activeRequest;
     this.activeRequest = undefined;
     this.requestQueue.length = 0;
-    const error = new Error(message);
-    for (const pending of queued) {
+    const error: Error = new Error(message);
+    for (const rawPending of queued) {
+      const pending: CommandPendingRequest = rawPending;
       if (pending !== active) {
         pending.reject(error);
       }
     }
     active?.reject(error);
     if (this.pendingCommand !== undefined) {
-      const waiter = this.pendingCommand;
+      const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } = this.pendingCommand;
       this.pendingCommand = undefined;
       waiter.reject(error);
     }
@@ -169,7 +155,7 @@ export class CBCommandChannelContext implements ICBCommandChannelContext {
   }
 
   dispatchInterruptToChildren(): void {
-    const children = this.children;
+    const children: CBCommandChannelTcpChildren | undefined = this.children;
     if (children === undefined) {
       return;
     }
@@ -197,21 +183,15 @@ export class CBCommandChannelContext implements ICBCommandChannelContext {
 
 /** Await ENROLL_ME completion — must not be called from inside an actor service (ihsm RTC). */
 export function waitForCommandChannelBootstrap(ctx: ICBCommandChannelContext): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    ctx.bootstrapDone = { resolve, reject };
-  });
+  return new Promise<void>( (resolve, reject) => { ctx.bootstrapDone = { resolve, reject }; } );
 }
 
 /** Await the next dispatched command answer on the command channel. */
 export function waitForCommandChannelAnswer(ctx: ICBCommandChannelContext): Promise<CBAnswer> {
-  return new Promise<CBAnswer>((resolve, reject) => {
-    ctx.pendingCommand = { resolve, reject };
-  });
+  return new Promise<CBAnswer>( (resolve, reject) => { ctx.pendingCommand = { resolve, reject }; } );
 }
 
 /** Await graceful command channel close. */
 export function waitForCommandChannelClose(ctx: ICBCommandChannelContext): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    ctx.pendingClose = { resolve, reject };
-  });
+  return new Promise<void>( (resolve, reject) => { ctx.pendingClose = { resolve, reject }; } );
 }

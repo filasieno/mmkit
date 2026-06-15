@@ -12,7 +12,6 @@ export interface IStdoutLogReaderContext {
   interrupted: boolean;
   interruptedPosted: boolean;
   lineBuffer: string;
-  assertDisarmed(): void;
   interrupt(): void;
   postInterrupted(): void;
   appendChunk(chunk: string): string[];
@@ -31,12 +30,6 @@ export class StdoutLogReaderContext implements IStdoutLogReaderContext {
     this.server = server;
   }
 
-  assertDisarmed(): void {
-    if (this.lineBuffer.length > 0) {
-      throw new Error("invariant violation: stdout log buffer must be empty when disarmed");
-    }
-  }
-
   interrupt(): void {
     this.interrupted = true;
   }
@@ -53,8 +46,8 @@ export class StdoutLogReaderContext implements IStdoutLogReaderContext {
     if (chunk.length === 0) {
       return [];
     }
-    const next = this.lineBuffer + chunk;
-    const lines = next.split("\n");
+    const next: string = this.lineBuffer + chunk;
+    const lines: string[] = next.split("\n");
     this.lineBuffer = lines.pop() ?? "";
     return lines;
   }
@@ -63,7 +56,7 @@ export class StdoutLogReaderContext implements IStdoutLogReaderContext {
     if (this.lineBuffer.length === 0) {
       return [];
     }
-    const line = this.lineBuffer;
+    const line: string = this.lineBuffer;
     this.lineBuffer = "";
     return [line];
   }

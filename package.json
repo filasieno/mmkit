@@ -7,11 +7,11 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run lint && npm run build -w @mmkit/shared && npm run build -w @mmkit/server && npm run build -w mmkit",
+    "build": "npm run lint && npm run build -w @mmkit/base && npm run build -w @mmkit/server && npm run build -w mmkit",
     "lint": "eslint .",
     "format": "eslint . --fix",
     "format:check": "eslint .",
-    "test": "npm test -w @mmkit/shared && npm test -w @mmkit/server && npm test -w mmkit",
+    "test": "npm test -w @mmkit/base && npm test -w @mmkit/server && npm test -w mmkit",
     "test:cbserver:real": "npm run test:cbserver:real -w @mmkit/server",
     "test:integration": "npm run test:integration -w mmkit",
     "check": "npm run format:check && npm run check -w mmkit",

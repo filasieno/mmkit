@@ -1,12 +1,7 @@
-import * as os from "node:os";
-import {
-  buildEnrollPayload,
-  buildIpcMessage,
-  decodeCbString,
-  lengthPrefix,
-} from "@mmkit/shared/dist/cb-tcp";
+import { buildEnrollPayload, buildIpcMessage, decodeCbString, lengthPrefix, } from "@mmkit/base";
 import type { CBAnswer } from "../../shared/CBServerDefs";
 import type { CBTcpConnectionOptions } from "../../shared/CBTcpOptions";
+import { enrollUserSuffix } from "../../shared/enrollUserSuffix";
 import type { CBConnectionReaderActor } from "../reader/CBConnectionReaderConfig";
 import type { CBConnectionWriterActor } from "../writer/CBConnectionWriterConfig";
 import { CB_IPC_METHODS } from "../../shared/cbIpcCatalog";
@@ -86,12 +81,7 @@ export class CBNotificationChannelContext implements ICBNotificationChannelConte
   pendingClose?: { resolve(): void; reject(error: Error): void };
   notificationReadTimer?: number;
 
-  constructor(
-    connectionId: string,
-    onChannelClosed: () => void,
-    onChannelBroken: (message: string) => void,
-    tcp: CBTcpConnectionOptions,
-  ) {
+  constructor( connectionId: string, onChannelClosed: () => void, onChannelBroken: (message: string) => void, tcp: CBTcpConnectionOptions ) {
     this.connectionId = connectionId;
     this.onChannelClosed = onChannelClosed;
     this.onChannelBroken = onChannelBroken;
@@ -103,7 +93,7 @@ export class CBNotificationChannelContext implements ICBNotificationChannelConte
   }
 
   consumePendingNotification(): { resolve(answer: CBAnswer): void; reject(error: Error): void } {
-    const waiter = this.pendingNotification;
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } | undefined = this.pendingNotification;
     if (waiter === undefined) {
       throw new Error("no pending notification waiter");
     }
@@ -124,7 +114,7 @@ export class CBNotificationChannelContext implements ICBNotificationChannelConte
   allocEnrollCommand(): NotificationEnrollRequest {
     return {
       method: CB_IPC_METHODS.ENROLL_ME,
-      data: buildEnrollPayload(this.tcp.toolName ?? "mmkit", this.enrollUserSuffix()),
+      data: buildEnrollPayload(this.tcp.toolName ?? "mmkit", enrollUserSuffix(this.tcp.userName)),
       client: '""',
       server: '""',
       resolve: () => undefined,
@@ -132,20 +122,15 @@ export class CBNotificationChannelContext implements ICBNotificationChannelConte
     };
   }
 
-  private enrollUserSuffix(): string {
-    const userName = this.tcp.userName ?? "mmkit";
-    return `${userName}@${os.hostname()}_${os.arch()}_${os.platform().replace(/\s/g, "")}`;
-  }
-
   buildIpcFrame(method: string, data: string, client = this.clientId, server = this.serverId): Buffer {
-    const message = buildIpcMessage(client, server, method, data);
+    const message: string = buildIpcMessage(client, server, method, data);
     return lengthPrefix(message);
   }
 
   rejectAllPending(message: string): void {
-    const error = new Error(message);
+    const error: Error = new Error(message);
     if (this.pendingNotification !== undefined) {
-      const waiter = this.pendingNotification;
+      const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } = this.pendingNotification;
       this.pendingNotification = undefined;
       waiter.reject(error);
     }
@@ -163,7 +148,7 @@ export class CBNotificationChannelContext implements ICBNotificationChannelConte
   }
 
   dispatchInterruptToChildren(): void {
-    const children = this.children;
+    const children: CBNotificationChannelTcpChildren | undefined = this.children;
     if (children === undefined) {
       return;
     }
@@ -191,21 +176,15 @@ export class CBNotificationChannelContext implements ICBNotificationChannelConte
 
 /** Await ENROLL_ME completion — must not be called from inside an actor service (ihsm RTC). */
 export function waitForNotificationChannelBootstrap(ctx: ICBNotificationChannelContext): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    ctx.bootstrapDone = { resolve, reject };
-  });
+  return new Promise<void>( (resolve, reject) => { ctx.bootstrapDone = { resolve, reject }; } );
 }
 
 /** Await a notification read on the notification channel. */
 export function waitForNotificationChannelAnswer(ctx: ICBNotificationChannelContext): Promise<CBAnswer> {
-  return new Promise<CBAnswer>((resolve, reject) => {
-    ctx.pendingNotification = { resolve, reject };
-  });
+  return new Promise<CBAnswer>( (resolve, reject) => { ctx.pendingNotification = { resolve, reject }; } );
 }
 
 /** Await graceful notification channel close. */
 export function waitForNotificationChannelClose(ctx: ICBNotificationChannelContext): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    ctx.pendingClose = { resolve, reject };
-  });
+  return new Promise<void>( (resolve, reject) => { ctx.pendingClose = { resolve, reject }; } );
 }

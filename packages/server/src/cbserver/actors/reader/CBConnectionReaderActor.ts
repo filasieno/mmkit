@@ -3,8 +3,8 @@ import type { CBAnswer } from "../../shared/CBServerDefs";
 import type { CBCommandChannelActorRef } from "../commandChannel/CBCommandChannelConfig";
 import type { CBNotificationChannelActorRef } from "../notificationChannel/CBNotificationChannelConfig";
 import { isIpcNotification } from "../../shared/cbIpcCatalog";
-import type { CBConnectionReaderMachineConfig } from "./CBConnectionReaderConfig";
 import { CBConnectionReaderTop } from "./CBConnectionReaderConfig";
+import type { CBConnectionReaderMachineConfig } from "./CBConnectionReaderConfig";
 import { CBConnectionReaderContext } from "./CBConnectionReaderContext";
 import * as inv from "./CBConnectionReaderInvariants";
 import * as self from "./CBConnectionReaderActor";
@@ -137,7 +137,7 @@ export class ReaderAwaiting extends ReaderInitialized {
 
   onEntry(): void {
     for (;;) {
-      const answer = this.ctx.tryTakeAnswer();
+      const answer: CBAnswer | undefined = this.ctx.tryTakeAnswer();
       if (answer === undefined) {
         break;
       }
@@ -154,7 +154,7 @@ export class ReaderAwaiting extends ReaderInitialized {
   onData(chunk: string): void {
     this._checkInvariant();
     this.ctx.appendChunk(chunk);
-    const answer = this.ctx.tryTakeAnswer();
+    const answer: CBAnswer | undefined = this.ctx.tryTakeAnswer();
     if (answer === undefined) {
       return;
     }
@@ -167,7 +167,7 @@ export class ReaderAwaiting extends ReaderInitialized {
 
   onEnd(): void {
     this._checkInvariant();
-    const answer = this.ctx.tryTakeAnswer();
+    const answer: CBAnswer | undefined = this.ctx.tryTakeAnswer();
     if (answer !== undefined) {
       if (isIpcNotification(answer.completion)) {
         this.ctx.postNotification(answer);
@@ -180,6 +180,10 @@ export class ReaderAwaiting extends ReaderInitialized {
     this.ctx.postFailed("socket ended before ipcanswer");
   }
 
+  onStreamClose(): void {
+    this.onEnd();
+  }
+
   onStreamError(message: string): void {
     this._checkInvariant();
     this.ctx.postFailed(message);
@@ -190,12 +194,6 @@ export class ReaderAwaiting extends ReaderInitialized {
     this.hsm.transition(ReaderIdle);
     this.ctx.postAnswer(answer);
   }
-}
-
-export function createReaderContext(
-  connection?: CBCommandChannelActorRef | CBNotificationChannelActorRef,
-): CBConnectionReaderContext {
-  return new CBConnectionReaderContext(connection);
 }
 
 export { CBConnectionReaderTop };

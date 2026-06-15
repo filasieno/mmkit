@@ -26,7 +26,7 @@ stdenvNoCC.mkDerivation rec {
     runHook preBuild
     export HOME="$TMPDIR"
 
-    npm run build -w @mmkit/shared
+    npm run build -w @mmkit/base
     npm run build -w @mmkit/server
     npm run build -w mmkit
 

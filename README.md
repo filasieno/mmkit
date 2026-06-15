@@ -12,14 +12,9 @@ mmkit/
   archive/packages/       previous extension, lsp-server, shared
   package.json              npm workspaces root
   packages/
-    shared/                 @mmkit/shared — command ids and shared constants
+    base/                   @mmkit/base — documented config interfaces (IMmkit*), protocol
     server/                 @mmkit/server — MCP, HTTP, LSP, cbserver (ihsm actor), system entry
-      src/cbserver/         CBServerActor, CBServerPort, CBServerContext
-      src/http/             Express health + MCP mount
-      src/lsp/              TCP language server
-      src/mcp/              MCP tools
-      src/system/           process entrypoint (main)
-    extension/              mmkit — VS Code extension
+    extension/              mmkit — VS Code extension, property sheet & contributes generation
 ```
 
 ## Build

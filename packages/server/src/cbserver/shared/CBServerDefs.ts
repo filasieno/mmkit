@@ -1,4 +1,5 @@
-import { parseAnswerTerm, toCbAnswer } from "@mmkit/shared/dist/cb-tcp";
+import { parseAnswerTerm, toCbAnswer } from "@mmkit/base";
+import type { CbAnswer } from "@mmkit/base";
 
 /** Parsed ipcanswer from a TCP session or Prolog term. */
 export class IpcAnswer {
@@ -15,7 +16,7 @@ export class IpcAnswer {
   }
 
   static fromTerm(term: string): IpcAnswer {
-    const parsed = toCbAnswer(parseAnswerTerm(term));
+    const parsed: CbAnswer = toCbAnswer(parseAnswerTerm(term));
     return new IpcAnswer(term, parsed.ok, parsed.completion, parsed.result);
   }
 }

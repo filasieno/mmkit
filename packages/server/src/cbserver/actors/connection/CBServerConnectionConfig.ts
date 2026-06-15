@@ -1,18 +1,10 @@
 import * as ihsm from "ihsm";
-import type { CBAnswer } from "../../shared/CBServerDefs";
+import type { ICBConnectionContext } from "./CBServerConnectionContext";
 import type { ICBCommandChannelContext } from "../commandChannel/CBCommandChannelContext";
 import type { ICBNotificationChannelContext } from "../notificationChannel/CBNotificationChannelContext";
-import type {
-  CBCommandChannelPortConfig,
-  CBCommandChannelActor,
-} from "../commandChannel/CBCommandChannelConfig";
-import type {
-  CBNotificationChannelPortConfig,
-  CBNotificationChannelActor,
-} from "../notificationChannel/CBNotificationChannelConfig";
-import type { ICBConnectionContext } from "./CBServerConnectionContext";
+import type { CBCommandChannelPortInput, CBCommandChannelActor } from "../commandChannel/CBCommandChannelConfig";
+import type { CBNotificationChannelPortInput, CBNotificationChannelActor } from "../notificationChannel/CBNotificationChannelConfig";
 
-/** Public `call` surface for the connection orchestrator actor. */
 export interface CBConnectionServices {
   initialize(): Promise<void>;
   getConnectionId(): Promise<string>;
@@ -20,7 +12,6 @@ export interface CBConnectionServices {
   getNotificationClientId(): Promise<string>;
 }
 
-/** Parent/handle-driven connection commands (sync — not on `call`). */
 export interface CBConnectionNotifications {
   close(): void;
   dispatchTell(frames: string): void;
@@ -47,42 +38,33 @@ export interface CBConnectionNotifications {
   dispatchGetNotificationMessage(timeoutMs?: number): void;
 }
 
+export interface CBConnectionInternalNotifications {
+  doSpawnChannels(): void;
+  doFinalizeClose(): void;
+  doBreakTransport(message: string): void;
+  onCommandChannelClosed(): void;
+  onNotificationChannelClosed(): void;
+  onCommandChannelBroken(message: string): void;
+  onNotificationChannelBroken(message: string): void;
+}
+
+export interface CBConnectionPort {
+  spawnCommandChannel( parent: ihsm.ParentActor<typeof CBConnectionTop>, ctx: ICBCommandChannelContext, channelPort: CBCommandChannelPortInput ): Promise<CBCommandChannelActor>;
+  spawnNotificationChannel( parent: ihsm.ParentActor<typeof CBConnectionTop>, ctx: ICBNotificationChannelContext, channelPort: CBNotificationChannelPortInput ): Promise<CBNotificationChannelActor>;
+}
+
 /** ihsm Config bag for the CBServer connection orchestrator actor. */
 export interface CBConnectionMachineConfig {
   context: ICBConnectionContext;
   services: CBConnectionServices;
   notifications: CBConnectionNotifications;
-  internalNotifications: {
-    doSpawnChannels(): void;
-    doFinalizeClose(): void;
-    doBreakTransport(message: string): void;
-    onCommandChannelClosed(): void;
-    onNotificationChannelClosed(): void;
-    onCommandChannelBroken(message: string): void;
-    onNotificationChannelBroken(message: string): void;
-  };
-  port: {
-    spawnCommandChannel(
-      parent: CBConnectionActorRef,
-      ctx: ICBCommandChannelContext,
-      channelPort: CBCommandChannelPortConfig,
-    ): Promise<CBCommandChannelActor>;
-    spawnNotificationChannel(
-      parent: CBConnectionActorRef,
-      ctx: ICBNotificationChannelContext,
-      channelPort: CBNotificationChannelPortConfig,
-    ): Promise<CBNotificationChannelActor>;
-  };
+  internalNotifications: CBConnectionInternalNotifications;
+  port: CBConnectionPort;
 }
 
 export type CBConnectionActor = ihsm.ChildActor<CBConnectionMachineConfig>;
 export type CBConnectionActorRef = ihsm.InboundActor<CBConnectionMachineConfig>;
 export type CBConnectionActorHandle = ihsm.ExternalActor<CBConnectionMachineConfig>;
-export type CBConnectionRegistry = Map<string, CBConnectionActor>;
-
-export type { ICBConnectionContext } from "./CBServerConnectionContext";
-
-/** Root composite state — no handlers; descendants define behavior. */
 export class CBConnectionTop extends ihsm.TopState<CBConnectionMachineConfig> {
   protected _checkInvariant(): void {}
 }

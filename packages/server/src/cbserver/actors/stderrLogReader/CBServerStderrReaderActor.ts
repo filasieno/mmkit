@@ -1,7 +1,7 @@
 import * as ihsm from "ihsm";
 import type { CBServerActorRef } from "../server/CBServerConfig";
-import type { StderrLogReaderMachineConfig } from "./CBServerStderrReaderConfig";
 import { StderrLogReaderTop } from "./CBServerStderrReaderConfig";
+import type { StderrLogReaderMachineConfig } from "./CBServerStderrReaderConfig";
 import { StderrReaderContext } from "./CBServerStderrReaderContext";
 import type { IStderrReaderContext } from "./CBServerStderrReaderContext";
 import * as inv from "./CBServerStderrLogReaderInvariants";
@@ -120,21 +120,24 @@ export class StderrIdle extends StderrInitialized {
 
   onData(chunk: string): void {
     this._checkInvariant();
-    for (const line of this.ctx.appendChunk(chunk)) {
+    for (const rawLine of this.ctx.appendChunk(chunk)) {
+      const line: string = rawLine;
       this.ctx.emitLine(line);
     }
   }
 
   onEnd(): void {
     this._checkInvariant();
-    for (const line of this.ctx.flushLineBuffer()) {
+    for (const rawLine of this.ctx.flushLineBuffer()) {
+      const line: string = rawLine;
       this.ctx.emitLine(line);
     }
   }
 
   onStreamClose(): void {
     this._checkInvariant();
-    for (const line of this.ctx.flushLineBuffer()) {
+    for (const rawLine of this.ctx.flushLineBuffer()) {
+      const line: string = rawLine;
       this.ctx.emitLine(line);
     }
   }
@@ -143,10 +146,6 @@ export class StderrIdle extends StderrInitialized {
     this._checkInvariant();
     this.ctx.emitLine(`[stderr error] ${message}`);
   }
-}
-
-export function createStderrReaderContext(server?: CBServerActorRef): StderrReaderContext {
-  return new StderrReaderContext(server);
 }
 
 export { StderrLogReaderTop };

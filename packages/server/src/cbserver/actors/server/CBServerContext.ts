@@ -1,28 +1,8 @@
 import { EventEmitter } from "node:events";
-import * as ihsm from "ihsm";
-import type { CBServerConfig, CBServerActorRef } from "./CBServerConfig";
-import type { CBConnectionActor, CBConnectionRegistry } from "../connection/CBServerConnectionConfig";
-import type { CBStderrLogReaderActor } from "../stderrLogReader/CBServerStderrReaderConfig";
-import type { CBStdoutLogReaderActor } from "../stdoutLogReader/CBServerStdoutLogReaderConfig";
-
-/**
- * Log line readers armed while the subprocess is active.
- *
- * Ports are owned by ihsm on each child — not stored here.
- */
-export type CBServerLogChildren = {
-  stdoutLogReader: CBStdoutLogReaderActor;
-  stderrLogReader: CBStderrLogReaderActor;
-};
-
-/** Last subprocess stop observed — diagnostics/tests only. */
-export type CBServerLastExit = {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  errorMessage?: string;
-};
-
-export type CBServerConnectionRegistry = CBConnectionRegistry;
+import type * as ihsm from "ihsm";
+import type { CBServerActorRef, CBServerLastExit, CBServerLogChildren, ICBServerContext, } from "./CBServerConfig";
+import type { CBServerConfig } from "./settings/CBServerSettings";
+import type { CBConnectionActor } from "../connection/CBServerConnectionConfig";
 
 /**
  * Mutable domain state for the CBServer supervisor HSM.
@@ -42,11 +22,15 @@ export type CBServerConnectionRegistry = CBConnectionRegistry;
  * **Process log readers** — stdout/stderr line readers while `Running`.
  * - `children` — armed in `Running.onEntry`.
  *
- * **Graceful stop** — `Stopping` → `ProcessDetaching`.
- * - `killSignaled`, `killGraceTimer` — SIGTERM then optional SIGKILL after grace.
- * - `shutdownRequested` — `requestShutdown()`; chooses `ShuttingDown` vs `Stopped`.
- * - `detachTarget` — destination leaf after log readers acknowledge interrupt.
- * - `awaitStdoutLogReaderInterrupted`, `awaitStderrLogReaderInterrupted`.
+ * **Graceful stop** — `Stopping` (close connections) → `Terminating` (SIGTERM, kill grace)
+ * → `ProcessDetaching` (drain log readers).
+ * - `killGraceTimer` — SIGTERM is sent on `Terminating` entry; SIGKILL fires after grace.
+ *   "Has SIGTERM been sent?" is the `Stopping` vs `Terminating` distinction, not a flag.
+ * - `shutdownRequested` — latched out-of-band intent from `requestShutdown()`. It is
+ *   orthogonal to the lifecycle (can arrive in any state) and only selects the terminal
+ *   leaf (`ShuttingDown` vs restartable `Stopped`), so it stays a flag rather than a state.
+ * - `pendingLogReaderInterrupts` — count of log-reader interrupt acks still outstanding;
+ *   `ProcessDetaching` completes when it reaches zero (a join counter, not paired booleans).
  *
  * **Supervisor wiring** — set in `Uninitialized.initialize()`.
  * - `serverMailbox` — inbound ref for child actors and internal `notify`.
@@ -57,92 +41,25 @@ export type CBServerConnectionRegistry = CBConnectionRegistry;
  * **Diagnostics**
  * - `lastExit` — last observed exit metadata.
  */
-export interface ICBServerContext {
-  readonly config: CBServerConfig;
-  readonly statusEvents: EventEmitter;
-  readonly processIoEvents: EventEmitter;
-  readonly connections: CBServerConnectionRegistry;
-  processSubscription?: ihsm.Disposable;
-  killGraceTimer?: number;
-  detachTarget: "stopped" | "shuttingDown";
-  awaitStdoutLogReaderInterrupted: boolean;
-  awaitStderrLogReaderInterrupted: boolean;
-  pid?: number;
-  shutdownRequested: boolean;
-  killSignaled: boolean;
-  children?: CBServerLogChildren;
-  lastExit?: CBServerLastExit;
-  serverMailbox?: CBServerActorRef;
-  assertSpawnArmed(): void;
-  assertProcessArmed(): void;
-  assertProcessDisarmed(): void;
-  assertIdle(): void;
-  recordLastExit(code: number | null, signal: NodeJS.Signals | null, errorMessage?: string): void;
-  resetForStart(): void;
-  disposeProcess(): void;
-  resetIdle(): void;
-  resetShutdown(): void;
-  allocConnectionId(): string;
-  registerConnection(id: string, actor: CBConnectionActor): void;
-  unregisterConnection(id: string): void;
-  clearConnections(): void;
-  beginDetachChildren(target: "stopped" | "shuttingDown"): void;
-  dispatchInterruptToChildren(): void;
-  noteStdoutLogReaderInterrupted(): void;
-  noteStderrLogReaderInterrupted(): void;
-  allInterrupted(): boolean;
-}
-
-/** Domain data for the CBServer actor — mutated from state handlers only. */
 export class CBServerContext implements ICBServerContext {
   readonly config: CBServerConfig;
   readonly statusEvents = new EventEmitter();
   readonly processIoEvents = new EventEmitter();
-  readonly connections: CBServerConnectionRegistry = new Map();
+  readonly connections: Map<string, CBConnectionActor> = new Map();
   processSubscription?: ihsm.Disposable;
   killGraceTimer?: number;
-  detachTarget: "stopped" | "shuttingDown" = "stopped";
-  awaitStdoutLogReaderInterrupted = false;
-  awaitStderrLogReaderInterrupted = false;
   pid?: number;
   shutdownRequested = false;
-  killSignaled = false;
   children?: CBServerLogChildren;
   lastExit?: CBServerLastExit;
   serverMailbox?: CBServerActorRef;
+  tcpPortProbeAttempt = 0;
+  tcpPortProbeRetryTimer?: number;
+  pendingLogReaderInterrupts = 0;
   private connectionSeq = 0;
 
   constructor(config: CBServerConfig) {
     this.config = config;
-  }
-
-  assertSpawnArmed(): void {
-    if (this.processSubscription === undefined || this.pid === undefined) {
-      throw new Error("invariant violation: process subscription must be armed");
-    }
-  }
-
-  assertProcessArmed(): void {
-    this.assertSpawnArmed();
-    if (this.children === undefined) {
-      throw new Error("invariant violation: log readers must be armed while process is active");
-    }
-  }
-
-  assertProcessDisarmed(): void {
-    if (this.processSubscription !== undefined || this.pid !== undefined) {
-      throw new Error("invariant violation: process subscription must be disarmed");
-    }
-    if (this.children !== undefined) {
-      throw new Error("invariant violation: log readers must be disarmed");
-    }
-  }
-
-  assertIdle(): void {
-    this.assertProcessDisarmed();
-    if (this.killSignaled) {
-      throw new Error("invariant violation: killSignaled must be false when idle");
-    }
   }
 
   recordLastExit(code: number | null, signal: NodeJS.Signals | null, errorMessage?: string): void {
@@ -151,10 +68,9 @@ export class CBServerContext implements ICBServerContext {
 
   resetForStart(): void {
     this.lastExit = undefined;
-    this.killSignaled = false;
-    this.awaitStdoutLogReaderInterrupted = false;
-    this.awaitStderrLogReaderInterrupted = false;
-    this.detachTarget = "stopped";
+    this.pendingLogReaderInterrupts = 0;
+    this.tcpPortProbeAttempt = 0;
+    this.tcpPortProbeRetryTimer = undefined;
   }
 
   disposeProcess(): void {
@@ -165,17 +81,14 @@ export class CBServerContext implements ICBServerContext {
 
   resetIdle(): void {
     this.disposeProcess();
-    this.killSignaled = false;
-    this.awaitStdoutLogReaderInterrupted = false;
-    this.awaitStderrLogReaderInterrupted = false;
-    this.detachTarget = "stopped";
+    this.pendingLogReaderInterrupts = 0;
+    this.tcpPortProbeAttempt = 0;
+    this.tcpPortProbeRetryTimer = undefined;
   }
 
   resetShutdown(): void {
     this.disposeProcess();
-    this.awaitStdoutLogReaderInterrupted = false;
-    this.awaitStderrLogReaderInterrupted = false;
-    this.detachTarget = "shuttingDown";
+    this.pendingLogReaderInterrupts = 0;
   }
 
   allocConnectionId(): string {
@@ -198,41 +111,25 @@ export class CBServerContext implements ICBServerContext {
     this.connections.clear();
   }
 
-  beginDetachChildren(target: "stopped" | "shuttingDown"): void {
-    this.detachTarget = target;
-    const children = this.children;
-    if (children === undefined) {
-      this.awaitStdoutLogReaderInterrupted = false;
-      this.awaitStderrLogReaderInterrupted = false;
-      return;
-    }
-    this.awaitStdoutLogReaderInterrupted = true;
-    this.awaitStderrLogReaderInterrupted = true;
+  beginDetachChildren(): void {
+    this.pendingLogReaderInterrupts = this.children === undefined ? 0 : 2;
   }
 
   dispatchInterruptToChildren(): void {
-    const children = this.children;
+    const children: CBServerLogChildren | undefined = this.children;
     if (children === undefined) {
       return;
     }
-    if (this.awaitStdoutLogReaderInterrupted) {
-      children.stdoutLogReader.notify.interrupt();
-    }
-    if (this.awaitStderrLogReaderInterrupted) {
-      children.stderrLogReader.notify.interrupt();
-    }
+    children.stdoutLogReader.notify.interrupt();
+    children.stderrLogReader.notify.interrupt();
     this.children = undefined;
   }
 
-  noteStdoutLogReaderInterrupted(): void {
-    this.awaitStdoutLogReaderInterrupted = false;
-  }
-
-  noteStderrLogReaderInterrupted(): void {
-    this.awaitStderrLogReaderInterrupted = false;
+  noteLogReaderInterrupted(): void {
+    this.pendingLogReaderInterrupts -= 1;
   }
 
   allInterrupted(): boolean {
-    return !this.awaitStdoutLogReaderInterrupted && !this.awaitStderrLogReaderInterrupted;
+    return this.pendingLogReaderInterrupts <= 0;
   }
 }

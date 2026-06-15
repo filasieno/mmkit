@@ -46,9 +46,7 @@ export interface CBCommandChannelPortConfig {
   open(): Promise<void>;
   write(buffer: Buffer): Promise<void>;
   destroy(): void;
-  spawnTcpChildren(
-    channel: CBCommandChannelActorRef,
-  ): Promise<CBCommandChannelTcpChildren>;
+  spawnTcpChildren( channel: CBCommandChannelActorRef ): Promise<CBCommandChannelTcpChildren>;
 }
 
 export interface CBCommandChannelInternalNotifications {
@@ -91,6 +89,8 @@ export interface CBCommandChannelMachineConfig {
 
 export type CBCommandChannelPort = ihsm.DomainPortOf<CBCommandChannelMachineConfig>;
 export type CBCommandChannelPortHandle = ihsm.IPort<CBCommandChannelMachineConfig>;
+/** A concrete port object: the domain contract plus a runtime port the actor runtime can bind. */
+export type CBCommandChannelPortInput = CBCommandChannelPortConfig & ihsm.MachinePortInput<CBCommandChannelMachineConfig>;
 export type CBCommandChannelActorRef = ihsm.InboundActor<CBCommandChannelMachineConfig>;
 export type CBCommandChannelActor = ihsm.ChildActor<CBCommandChannelMachineConfig>;
 

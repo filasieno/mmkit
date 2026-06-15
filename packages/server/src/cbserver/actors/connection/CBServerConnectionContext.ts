@@ -1,6 +1,6 @@
 import type { CBTcpConnectionOptions } from "../../shared/CBTcpOptions";
-import type { CBCommandChannelPortConfig, CBCommandChannelActor } from "../commandChannel/CBCommandChannelConfig";
-import type { CBNotificationChannelPortConfig, CBNotificationChannelActor } from "../notificationChannel/CBNotificationChannelConfig";
+import type { CBCommandChannelPortInput, CBCommandChannelActor } from "../commandChannel/CBCommandChannelConfig";
+import type { CBNotificationChannelPortInput, CBNotificationChannelActor } from "../notificationChannel/CBNotificationChannelConfig";
 import type { CBConnectionActorRef } from "./CBServerConnectionConfig";
 import type { ICBCommandChannelContext } from "../commandChannel/CBCommandChannelContext";
 import type { ICBNotificationChannelContext } from "../notificationChannel/CBNotificationChannelContext";
@@ -21,8 +21,8 @@ export interface ICBConnectionContext {
   notificationCtx?: ICBNotificationChannelContext;
   orchestratorMailbox?: CBConnectionActorRef;
   channelPorts?: {
-    command?: CBCommandChannelPortConfig;
-    notification?: CBNotificationChannelPortConfig;
+    command?: CBCommandChannelPortInput;
+    notification?: CBNotificationChannelPortInput;
   };
   bootstrapDone?: { resolve(): void; reject(error: Error): void };
   pendingCommand?: { resolve(answer: CBAnswer): void; reject(error: Error): void };
@@ -50,8 +50,8 @@ export class CBConnectionContext implements ICBConnectionContext {
   notificationCtx?: ICBNotificationChannelContext;
   orchestratorMailbox?: CBConnectionActorRef;
   channelPorts?: {
-    command?: CBCommandChannelPortConfig;
-    notification?: CBNotificationChannelPortConfig;
+    command?: CBCommandChannelPortInput;
+    notification?: CBNotificationChannelPortInput;
   };
   bootstrapDone?: { resolve(): void; reject(error: Error): void };
   pendingCommand?: { resolve(answer: CBAnswer): void; reject(error: Error): void };
@@ -60,12 +60,7 @@ export class CBConnectionContext implements ICBConnectionContext {
   commandChannelClosed = false;
   notificationChannelClosed = false;
 
-  constructor(
-    connectionId: string,
-    onClose: () => void,
-    tcp: CBTcpConnectionOptions,
-    channelPorts?: ICBConnectionContext["channelPorts"],
-  ) {
+  constructor( connectionId: string, onClose: () => void, tcp: CBTcpConnectionOptions, channelPorts?: ICBConnectionContext["channelPorts"] ) {
     this.connectionId = connectionId;
     this.onClose = onClose;
     this.tcp = tcp;
@@ -83,14 +78,14 @@ export class CBConnectionContext implements ICBConnectionContext {
   }
 
   rejectAllPending(message: string): void {
-    const error = new Error(message);
+    const error: Error = new Error(message);
     if (this.pendingCommand !== undefined) {
-      const waiter = this.pendingCommand;
+      const waiter: NonNullable<ICBConnectionContext["pendingCommand"]> = this.pendingCommand;
       this.pendingCommand = undefined;
       waiter.reject(error);
     }
     if (this.pendingNotification !== undefined) {
-      const waiter = this.pendingNotification;
+      const waiter: NonNullable<ICBConnectionContext["pendingNotification"]> = this.pendingNotification;
       this.pendingNotification = undefined;
       waiter.reject(error);
     }
@@ -112,28 +107,20 @@ export class CBConnectionContext implements ICBConnectionContext {
 
 /** Await both channel ENROLL completions. */
 export function waitForConnectionBootstrap(ctx: ICBConnectionContext): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    ctx.bootstrapDone = { resolve, reject };
-  });
+  return new Promise<void>( (resolve, reject) => { ctx.bootstrapDone = { resolve, reject }; } );
 }
 
 /** Await the next orchestrator command answer. */
 export function waitForCommandAnswer(ctx: ICBConnectionContext): Promise<CBAnswer> {
-  return new Promise<CBAnswer>((resolve, reject) => {
-    ctx.pendingCommand = { resolve, reject };
-  });
+  return new Promise<CBAnswer>( (resolve, reject) => { ctx.pendingCommand = { resolve, reject }; } );
 }
 
 /** Await a notification from the notification channel. */
 export function waitForNotificationAnswer(ctx: ICBConnectionContext): Promise<CBAnswer> {
-  return new Promise<CBAnswer>((resolve, reject) => {
-    ctx.pendingNotification = { resolve, reject };
-  });
+  return new Promise<CBAnswer>( (resolve, reject) => { ctx.pendingNotification = { resolve, reject }; } );
 }
 
 /** Await graceful dual-channel close. */
 export function waitForConnectionClose(ctx: ICBConnectionContext): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    ctx.pendingClose = { resolve, reject };
-  });
+  return new Promise<void>( (resolve, reject) => { ctx.pendingClose = { resolve, reject }; } );
 }

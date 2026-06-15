@@ -2,23 +2,4 @@
 import { expect } from "chai";
 import { formatTcpLengthFrame, tryParseTcpLengthFrame } from "../../src/cbserver/actors/reader/tcpFraming";
 
-describe("tcpFraming (server → client ipcanswer)", function () {
-  it("parses length line, term, and trailing newline", () => {
-    const term = 'ipcanswer("cbserver",ok,"/Root").';
-    const frame = formatTcpLengthFrame(term);
-    const parsed = tryParseTcpLengthFrame(frame);
-    expect(parsed?.body).to.equal(term);
-    expect(parsed?.consumed).to.equal(frame.length);
-  });
-
-  it("parses back-to-back answers (no leftover newline breaks second frame)", () => {
-    const enroll = formatTcpLengthFrame('ipcanswer("cbserver",ok,"client-1").');
-    const pwd = formatTcpLengthFrame('ipcanswer("cbserver",ok,"/Root").');
-    let buffer = enroll + pwd;
-    const first = tryParseTcpLengthFrame(buffer);
-    expect(first).to.not.equal(undefined);
-    buffer = buffer.slice(first!.consumed);
-    const second = tryParseTcpLengthFrame(buffer);
-    expect(second?.body).to.equal('ipcanswer("cbserver",ok,"/Root").');
-  });
-});
+describe( "tcpFraming (server → client ipcanswer)", function () { it("parses length line, term, and trailing newline", () => { const term = 'ipcanswer("cbserver",ok,"/Root").'; const frame = formatTcpLengthFrame(term); const parsed = tryParseTcpLengthFrame(frame); expect(parsed?.body).to.equal(term); expect(parsed?.consumed).to.equal(frame.length); }); it("parses back-to-back answers (no leftover newline breaks second frame)", () => { const enroll = formatTcpLengthFrame('ipcanswer("cbserver",ok,"client-1").'); const pwd = formatTcpLengthFrame('ipcanswer("cbserver",ok,"/Root").'); let buffer = enroll + pwd; const first = tryParseTcpLengthFrame(buffer); expect(first).to.not.equal(undefined); buffer = buffer.slice(first!.consumed); const second = tryParseTcpLengthFrame(buffer); expect(second?.body).to.equal('ipcanswer("cbserver",ok,"/Root").'); }); } );

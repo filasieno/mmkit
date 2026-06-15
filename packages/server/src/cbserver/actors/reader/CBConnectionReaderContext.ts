@@ -1,8 +1,8 @@
+import { IpcAnswer } from "../../shared/CBServerDefs";
 import type { CBAnswer } from "../../shared/CBServerDefs";
 import type { CBCommandChannelActorRef } from "../commandChannel/CBCommandChannelConfig";
 import type { CBNotificationChannelActorRef } from "../notificationChannel/CBNotificationChannelConfig";
 import { isIpcNotification } from "../../shared/cbIpcCatalog";
-import { IpcAnswer } from "../../shared/CBServerDefs";
 import { tryParseTcpLengthFrame } from "./tcpFraming";
 
 export interface ICBConnectionReaderContext {
@@ -38,7 +38,7 @@ export class CBConnectionReaderContext implements ICBConnectionReaderContext {
   }
 
   tryTakeAnswer(): CBAnswer | undefined {
-    const parsed = tryParseTcpLengthFrame(this.buffer);
+    const parsed: { consumed: number; body: string } | undefined = tryParseTcpLengthFrame(this.buffer);
     if (parsed === undefined) {
       return undefined;
     }
@@ -66,11 +66,11 @@ export class CBConnectionReaderContext implements ICBConnectionReaderContext {
 
   drainSpontaneousNotifications(): void {
     for (;;) {
-      const parsed = tryParseTcpLengthFrame(this.buffer);
+      const parsed: { consumed: number; body: string } | undefined = tryParseTcpLengthFrame(this.buffer);
       if (parsed === undefined) {
         return;
       }
-      const answer = IpcAnswer.fromTerm(parsed.body);
+      const answer: CBAnswer = IpcAnswer.fromTerm(parsed.body);
       if (!isIpcNotification(answer.completion)) {
         return;
       }

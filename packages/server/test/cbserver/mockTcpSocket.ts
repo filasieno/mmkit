@@ -1,22 +1,12 @@
 import * as ihsm from "ihsm/testing";
-import {
-  buildIpcMessage,
-  encodeCbString,
-  parseAnswerTerm,
-  toCbAnswer,
-} from "@mmkit/shared/dist/cb-tcp";
-import { CBCommandChannelTop } from "../../src/cbserver/actors/commandChannel/CBCommandChannelConfig";
-import type { CBCommandChannelActorRef } from "../../src/cbserver/actors/commandChannel/CBCommandChannelConfig";
-import { CBNotificationChannelTop } from "../../src/cbserver/actors/notificationChannel/CBNotificationChannelConfig";
-import type { CBNotificationChannelActorRef } from "../../src/cbserver/actors/notificationChannel/CBNotificationChannelConfig";
+import { buildIpcMessage, encodeCbString, parseAnswerTerm, toCbAnswer, } from "@mmkit/base";
+import type { CBCommandChannelTop, CBCommandChannelActorRef } from "../../src/cbserver/actors/commandChannel/CBCommandChannelConfig";
+import type { CBNotificationChannelTop, CBNotificationChannelActorRef } from "../../src/cbserver/actors/notificationChannel/CBNotificationChannelConfig";
 import { formatTcpLengthFrame } from "../../src/cbserver/actors/reader/tcpFraming";
 import { CB_IPC_METHODS } from "../../src/cbserver/shared/cbIpcCatalog";
-import { createReaderContext, CBConnectionReaderTop, ReaderUninitialized } from "../../src/cbserver/actors/reader/CBConnectionReaderActor";
-import { createWriterContext, CBConnectionWriterTop, WriterUninitialized } from "../../src/cbserver/actors/writer/CBConnectionWriterActor";
-import { CBConnectionWriterPort } from "../../src/cbserver/actors/writer/CBConnectionWriterPort";
 import type { CBCommandChannelTcpChildren } from "../../src/cbserver/actors/commandChannel/CBCommandChannelContext";
 import type { CBNotificationChannelTcpChildren } from "../../src/cbserver/actors/notificationChannel/CBNotificationChannelContext";
-import { spawnTestChildActor } from "./cbChildSpawnTest";
+import { testSpawnCommandChannelTcpChildren, testSpawnNotificationChannelTcpChildren } from "./cbserverTestSpawn";
 
 @ihsm.mock("open", "write", "destroy", "spawnTcpChildren")
 export abstract class MockCBCommandChannelPort extends ihsm.TestPort<typeof CBCommandChannelTop> {
@@ -61,83 +51,37 @@ function mockAnswerBody(method: string | undefined, enrollClientId: string): str
   return `ipcanswer("cbserver",ok,"yes").`;
 }
 
-function wireMockCommandTcpSocket(
-  port: ReturnType<typeof ihsm.makeTestPort<MockCBCommandChannelPort>>,
-  enrollClientId: string,
-): void {
+function wireMockTcpSocket<
+  TPort extends {
+    open: { default: (fn: () => Promise<void>) => void };
+    destroy: { default: (fn: () => void) => void };
+    write: { default: (fn: (buffer: Buffer) => Promise<void>) => void };
+    send: (event: "onSocketData", frame: string) => void;
+    spawnTcpChildren: {
+      default: (
+        fn: (channel: CBCommandChannelActorRef | CBNotificationChannelActorRef) => Promise<
+          CBCommandChannelTcpChildren | CBNotificationChannelTcpChildren
+        >,
+      ) => void;
+    };
+  },
+>( port: TPort, enrollClientId: string, spawnTcpChildren: ( channel: CBCommandChannelActorRef | CBNotificationChannelActorRef, ) => Promise<CBCommandChannelTcpChildren | CBNotificationChannelTcpChildren> ): void {
   port.open.default(async () => undefined);
   port.destroy.default(() => undefined);
-  port.write.default(async (buffer: Buffer) => {
-    const method = parseOutboundMethod(buffer);
-    const body = mockAnswerBody(method, enrollClientId);
-    port.send("onSocketData", formatTcpLengthFrame(body));
-  });
-  port.spawnTcpChildren.default(async (channel) => {
-    const readerCtx = createReaderContext(channel);
-    const reader = spawnTestChildActor(CBConnectionReaderTop, readerCtx, undefined, { initialize: false });
-    reader.hsm.restore(ReaderUninitialized, readerCtx);
-    const writerCtx = createWriterContext(channel);
-    const writer = spawnTestChildActor(
-      CBConnectionWriterTop,
-      writerCtx,
-      new CBConnectionWriterPort(port),
-      { initialize: false },
-    );
-    writer.hsm.restore(WriterUninitialized, writerCtx);
-    await reader.call.initialize();
-    await writer.call.initialize();
-    return { reader, writer };
-  });
+  port.write.default( async (buffer: Buffer) => { const method = parseOutboundMethod(buffer); const body = mockAnswerBody(method, enrollClientId); port.send("onSocketData", formatTcpLengthFrame(body)); } );
+  port.spawnTcpChildren.default(async (channel) => spawnTcpChildren(channel));
 }
 
-function wireMockNotificationTcpSocket(
-  port: ReturnType<typeof ihsm.makeTestPort<MockCBNotificationChannelPort>>,
-  enrollClientId: string,
-): void {
-  port.open.default(async () => undefined);
-  port.destroy.default(() => undefined);
-  port.write.default(async (buffer: Buffer) => {
-    const method = parseOutboundMethod(buffer);
-    const body = mockAnswerBody(method, enrollClientId);
-    port.send("onSocketData", formatTcpLengthFrame(body));
-  });
-  port.spawnTcpChildren.default(async (channel) => {
-    const readerCtx = createReaderContext(channel);
-    const reader = spawnTestChildActor(CBConnectionReaderTop, readerCtx, undefined, { initialize: false });
-    reader.hsm.restore(ReaderUninitialized, readerCtx);
-    const writerCtx = createWriterContext(channel);
-    const writer = spawnTestChildActor(
-      CBConnectionWriterTop,
-      writerCtx,
-      new CBConnectionWriterPort(port),
-      { initialize: false },
-    );
-    writer.hsm.restore(WriterUninitialized, writerCtx);
-    await reader.call.initialize();
-    await writer.call.initialize();
-    return { reader, writer };
-  });
-}
-
-export function makeMockCommandChannelPort(
-  enrollClientId = "mock-client",
-): ReturnType<typeof ihsm.makeTestPort<MockCBCommandChannelPort>> {
+export function makeMockCommandChannelPort(enrollClientId = "mock-client",): ReturnType<typeof ihsm.makeTestPort<MockCBCommandChannelPort>> {
   const port = ihsm.makeTestPort(MockCBCommandChannelPort);
-  wireMockCommandTcpSocket(port, enrollClientId);
+  wireMockTcpSocket( port, enrollClientId, (channel) => testSpawnCommandChannelTcpChildren(channel as CBCommandChannelActorRef, port), );
   return port;
 }
 
-export function makeMockNotificationChannelPort(
-  enrollClientId = "mock-notify-client",
-): ReturnType<typeof ihsm.makeTestPort<MockCBNotificationChannelPort>> {
+export function makeMockNotificationChannelPort(enrollClientId = "mock-notify-client",): ReturnType<typeof ihsm.makeTestPort<MockCBNotificationChannelPort>> {
   const port = ihsm.makeTestPort(MockCBNotificationChannelPort);
-  wireMockNotificationTcpSocket(port, enrollClientId);
+  wireMockTcpSocket( port, enrollClientId, (channel) => testSpawnNotificationChannelTcpChildren(channel as CBNotificationChannelActorRef, port), );
   return port;
-}
-
-/** @deprecated Use {@link makeMockCommandChannelPort} */
-export function makeMockTcpSocketPort(enrollClientId = "mock-client") {
-  return makeMockCommandChannelPort(enrollClientId);
 }
 
 export function formatMockIpcAnswer(method: string, result = "yes"): string {
@@ -147,9 +91,3 @@ export function formatMockIpcAnswer(method: string, result = "yes"): string {
   void toCbAnswer(parseAnswerTerm(term));
   return formatTcpLengthFrame(term);
 }
-
-/** @deprecated Use {@link MockCBCommandChannelPort} */
-export abstract class MockCBChannelPort extends MockCBCommandChannelPort {}
-
-/** @deprecated Use {@link MockCBCommandChannelPort} */
-export abstract class MockCBConnectionPort extends MockCBCommandChannelPort {}

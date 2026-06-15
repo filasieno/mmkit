@@ -1,5 +1,5 @@
 {
-  "name": "@mmkit/shared",
+  "name": "@mmkit/base",
   "version": "0.2.0",
   "private": true,
   "license": "BSD-2-Clause",

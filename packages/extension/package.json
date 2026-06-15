@@ -20,7 +20,8 @@
     "onStartupFinished"
   ],
   "scripts": {
-    "build": "node esbuild.mjs",
+    "sync-contributes": "tsx scripts/sync-contributes.ts",
+    "build": "npm run sync-contributes && node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "test": "rm -rf out-test && tsc -p tsconfig.test.json && mocha 'out-test/test/**/*.test.js'",
     "test:integration": "npm run build && tsc -p tsconfig.integration.json && tsx test-integration/runTest.ts",
@@ -28,7 +29,7 @@
     "vscode:prepublish": "npm run build"
   },
   "dependencies": {
-    "@mmkit/shared": "0.2.0"
+    "@mmkit/base": "0.2.0"
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
@@ -48,6 +49,272 @@
         "command": "mmkit.helloWorld",
         "title": "Hello World",
         "category": "Metamodelling Kit"
+      },
+      {
+        "command": "mmkit.openSettings",
+        "title": "Open mmkit Settings",
+        "category": "Metamodelling Kit"
+      }
+    ],
+    "configuration": [
+      {
+        "title": "Metamodelling Kit",
+        "order": 0,
+        "properties": {
+          "mmkit.operationalMode": {
+            "type": "string",
+            "default": "internalServer",
+            "description": "Whether mmkit manages a local cbserver, connects as a TCP client, or stays idle.",
+            "markdownDescription": "Controls which state machines are active.\n\n- **none** — server and client managers stay disabled.\n- **internalServer** — mmkit supervises a local cbserver using **Server** settings.\n- **client** — mmkit connects to an existing cbserver using **Client** settings.",
+            "enum": [
+              "none",
+              "internalServer",
+              "client"
+            ],
+            "enumDescriptions": [
+              "No local server and no outbound client connection.",
+              "Start and supervise a cbserver subprocess on this machine.",
+              "Connect to a remote cbserver over TCP."
+            ],
+            "order": 0
+          },
+          "mmkit.traceLevel": {
+            "type": "string",
+            "default": "trace",
+            "description": "Minimum OTEL severity for MMKit Trace output.",
+            "markdownDescription": "Filters mmkit extension diagnostics. Does not change cbserver `-t` trace mode (see Server runtime settings when exposed).",
+            "enum": [
+              "trace",
+              "debug",
+              "info",
+              "warn",
+              "error",
+              "off"
+            ],
+            "order": 1
+          },
+          "mmkit.languageServer.trace": {
+            "type": "string",
+            "default": "off",
+            "description": "Trace LSP messages to the MMKit Trace output channel.",
+            "enum": [
+              "off",
+              "messages",
+              "verbose"
+            ],
+            "enumDescriptions": [
+              "No LSP logging.",
+              "Log message type and method name only.",
+              "Log full JSON-RPC payloads."
+            ],
+            "order": 2
+          },
+          "mmkit.languageServer.lspPort": {
+            "type": "number",
+            "default": 16011,
+            "description": "Host TCP port for the mmkit language server.",
+            "markdownDescription": "Port bound on `127.0.0.1` for the language server protocol endpoint.",
+            "order": 3
+          },
+          "mmkit.languageServer.httpPort": {
+            "type": "number",
+            "default": 28080,
+            "description": "Host HTTP port for LSP health, readiness, metrics, and MCP (/mcp).",
+            "order": 4
+          }
+        }
+      },
+      {
+        "title": "Server",
+        "order": 1,
+        "properties": {
+          "mmkit.server.launchKind": {
+            "type": "string",
+            "default": "executable",
+            "description": "Run cbserver as a local binary or inside Docker.",
+            "enum": [
+              "executable",
+              "docker"
+            ],
+            "enumDescriptions": [
+              "Spawn `cbserver` on the host PATH.",
+              "Run cbserver in a container (future)."
+            ],
+            "order": 0
+          },
+          "mmkit.server.executablePath": {
+            "type": "string",
+            "default": "cbserver",
+            "description": "Path to the cbserver binary.",
+            "markdownDescription": "Absolute path or name resolved via `PATH`. Used when launch method is **executable**.",
+            "order": 1
+          },
+          "mmkit.server.dockerImage": {
+            "type": "string",
+            "default": "conceptbase-cbserver:0.1.1",
+            "description": "Container image reference for Docker launch.",
+            "order": 2
+          },
+          "mmkit.server.dockerContainerName": {
+            "type": "string",
+            "default": "mmkit-cbserver",
+            "description": "Fixed name for the cbserver container.",
+            "order": 3
+          },
+          "mmkit.server.dockerExtraRunArgs": {
+            "type": "array",
+            "default": [],
+            "description": "Additional `docker run` arguments.",
+            "order": 4
+          },
+          "mmkit.server.dataDir": {
+            "type": "string",
+            "default": "~/.mmkit",
+            "description": "Base directory for mmkit-owned cbserver data.",
+            "markdownDescription": "Default `~/.mmkit`. Expanded at launch; subdirectories derive database and temp paths when left empty.",
+            "scope": "application",
+            "order": 10
+          },
+          "mmkit.server.port": {
+            "type": "number",
+            "default": 4001,
+            "description": "Port cbserver listens on.",
+            "markdownDescription": "Maps to cbserver `-p` / `CB_PORTNR` (`2000`–`65535`).",
+            "order": 11
+          },
+          "mmkit.server.updateMode": {
+            "type": "string",
+            "default": "persistent",
+            "description": "Database update persistency.",
+            "enum": [
+              "persistent",
+              "nonpersistent"
+            ],
+            "enumDescriptions": [
+              "Keep tells across restarts.",
+              "Ephemeral session database under `tmpDir`."
+            ],
+            "order": 12
+          },
+          "mmkit.server.databasePath": {
+            "type": "string",
+            "default": "",
+            "description": "Persistent database directory.",
+            "markdownDescription": "Empty = unset. Knowledge-base files only (not module save/views).",
+            "order": 20
+          },
+          "mmkit.server.databaseAllPath": {
+            "type": "string",
+            "default": "",
+            "description": "Combined database workspace path.",
+            "markdownDescription": "Empty → `${dataDir}/workspace` when persistent and no `-d`/`-new` set.",
+            "order": 21
+          },
+          "mmkit.server.newDatabasePath": {
+            "type": "string",
+            "default": "",
+            "description": "Create a new database at this path on start.",
+            "order": 22
+          },
+          "mmkit.server.resetOnStart": {
+            "type": "boolean",
+            "default": false,
+            "description": "Use `-new` instead of `-d` for `databasePath`.",
+            "order": 23
+          },
+          "mmkit.server.tmpDir": {
+            "type": "string",
+            "default": "",
+            "description": "TMPDIR for nonpersistent session copies.",
+            "markdownDescription": "Empty → `${dataDir}/tmp`.",
+            "order": 24
+          },
+          "mmkit.server.loadDir": {
+            "type": "string",
+            "default": "",
+            "description": "Module load directory (`-load`).",
+            "order": 25
+          },
+          "mmkit.server.saveDir": {
+            "type": "string",
+            "default": "",
+            "description": "Module save directory (`-save`).",
+            "order": 26
+          },
+          "mmkit.server.viewsDir": {
+            "type": "string",
+            "default": "",
+            "description": "Materialized views directory (`-views`).",
+            "order": 27
+          },
+          "mmkit.server.devCommand": {
+            "type": "string",
+            "default": "",
+            "description": "Override launch command for development.",
+            "markdownDescription": "When non-empty, replaces `executablePath` in the subprocess launch spec.",
+            "order": 28
+          },
+          "mmkit.server.extraArgs": {
+            "type": "array",
+            "default": [],
+            "description": "Additional cbserver CLI arguments.",
+            "order": 29
+          }
+        }
+      },
+      {
+        "title": "Client",
+        "order": 2,
+        "properties": {
+          "mmkit.client.host": {
+            "type": "string",
+            "default": "127.0.0.1",
+            "description": "Hostname or IP of the remote cbserver.",
+            "order": 0
+          },
+          "mmkit.client.port": {
+            "type": "number",
+            "default": 4001,
+            "description": "TCP port of the remote cbserver.",
+            "order": 1
+          },
+          "mmkit.client.toolName": {
+            "type": "string",
+            "default": "mmkit",
+            "description": "Tool name sent during ENROLL_ME.",
+            "order": 2
+          },
+          "mmkit.client.userName": {
+            "type": "string",
+            "default": "user",
+            "description": "User name sent during ENROLL_ME.",
+            "order": 3
+          },
+          "mmkit.client.connectTimeoutMs": {
+            "type": "number",
+            "default": 10000,
+            "description": "TCP connect and enroll timeout.",
+            "order": 4
+          },
+          "mmkit.client.autoConnect": {
+            "type": "boolean",
+            "default": false,
+            "description": "Connect automatically when operational mode is client.",
+            "order": 5
+          },
+          "mmkit.client.autoReconnect": {
+            "type": "boolean",
+            "default": true,
+            "description": "Reconnect after connection loss.",
+            "order": 6
+          },
+          "mmkit.client.reconnectBackoffMs": {
+            "type": "number",
+            "default": 2000,
+            "description": "Delay before reconnect attempts.",
+            "order": 7
+          }
+        }
       }
     ]
   }

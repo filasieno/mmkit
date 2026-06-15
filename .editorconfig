@@ -1,4 +1,4 @@
-# mmkit — keep in sync with ESLint @stylistic layout (see tslint.json / eslint.config.mjs)
+# mmkit — keep in sync with eslint.config.mjs (@stylistic + local layout rules)
 root = true
 
 [*]

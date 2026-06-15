@@ -1,8 +1,8 @@
 import * as ihsm from "ihsm";
 import type { CBCommandChannelActorRef } from "../commandChannel/CBCommandChannelConfig";
 import type { CBNotificationChannelActorRef } from "../notificationChannel/CBNotificationChannelConfig";
-import type { CBConnectionWriterMachineConfig } from "./CBConnectionWriterConfig";
 import { CBConnectionWriterTop } from "./CBConnectionWriterConfig";
+import type { CBConnectionWriterMachineConfig } from "./CBConnectionWriterConfig";
 import { CBConnectionWriterContext } from "./CBConnectionWriterContext";
 import * as inv from "./CBConnectionWriterInvariants";
 import * as self from "./CBConnectionWriterActor";
@@ -117,12 +117,6 @@ export class WriterSending extends WriterInitialized {
     this.hsm.transition(WriterIdle);
     this.ctx.postWriteFailed(message);
   }
-}
-
-export function createWriterContext(
-  connection?: CBCommandChannelActorRef | CBNotificationChannelActorRef,
-): CBConnectionWriterContext {
-  return new CBConnectionWriterContext(connection);
 }
 
 export { CBConnectionWriterTop };

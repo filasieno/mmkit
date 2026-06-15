@@ -1,13 +1,12 @@
 import * as ihsm from "ihsm";
-import { encodeCbString, parseAnswerTerm } from "@mmkit/shared/dist/cb-tcp";
+import { encodeCbString, parseAnswerTerm } from "@mmkit/base";
+import type { ParsedAnswer } from "@mmkit/base";
 import type { CBAnswer } from "../../shared/CBServerDefs";
-import { CBNotificationChannelTop, type CBNotificationChannelPortHandle } from "./CBNotificationChannelConfig";
-import {
-  CB_IPC_COMPLETIONS,
-  CB_IPC_METHODS,
-  isIpcTransportFailure,
-} from "../../shared/cbIpcCatalog";
-import { cbTraceAnswer } from "../../shared/cbTrace";
+import { CBNotificationChannelTop } from "./CBNotificationChannelConfig";
+import type { CBNotificationChannelActorRef, CBNotificationChannelPortHandle } from "./CBNotificationChannelConfig";
+import type { NotificationEnrollRequest } from "./CBNotificationChannelContext";
+import { CB_IPC_COMPLETIONS, CB_IPC_METHODS, isIpcTransportFailure, } from "../../shared/cbIpcCatalog";
+import { cbTrace } from "../../shared/cbTrace";
 import * as inv from "./CBNotificationChannelInvariants";
 import * as self from "./CBNotificationChannelActor";
 
@@ -26,6 +25,19 @@ import * as self from "./CBNotificationChannelActor";
  * ```
  */
 
+@ihsm.InitialState
+export class NotificationUninitialized extends CBNotificationChannelTop {
+  protected override _checkInvariant(): void {
+    inv.assertNotificationUninitialized(this.ctx);
+  }
+
+  async initialize(): Promise<void> {
+    this._checkInvariant();
+    this.ctx.channelMailbox = (this.hsm.port as unknown as CBNotificationChannelPortHandle).actor;
+    this.hsm.transition(NotificationConnecting);
+  }
+}
+
 export class NotificationChannelBase extends CBNotificationChannelTop {
   protected override _checkInvariant(): void {}
 
@@ -33,29 +45,6 @@ export class NotificationChannelBase extends CBNotificationChannelTop {
     if (this.ctx.notificationReadTimer !== undefined) {
       this.hsm.port.clearTimeout(this.ctx.notificationReadTimer);
       this.ctx.notificationReadTimer = undefined;
-    }
-  }
-
-  protected resolveNotificationReadTimeout(): void {
-    this.clearNotificationReadTimer();
-    const waiter = this.ctx.pendingNotification;
-    if (waiter === undefined) {
-      return;
-    }
-    this.ctx.pendingNotification = undefined;
-    try {
-      this.ctx.children?.reader.notify.interrupt();
-    } catch {
-      // reader may already be idle
-    }
-    waiter.resolve({
-      ok: false,
-      completion: CB_IPC_COMPLETIONS.TIMEOUT,
-      result: "timeout",
-      term: 'ipcanswer("",timeout,"timeout").',
-    });
-    if (this.hsm.currentState === NotificationAwaiting) {
-      this.hsm.transition(NotificationIdle);
     }
   }
 
@@ -134,19 +123,6 @@ export class NotificationChannelBase extends CBNotificationChannelTop {
   }
 }
 
-@ihsm.InitialState
-export class NotificationUninitialized extends NotificationChannelBase {
-  protected override _checkInvariant(): void {
-    inv.assertNotificationUninitialized(this.ctx);
-  }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.ctx.channelMailbox = (this.hsm.port as unknown as CBNotificationChannelPortHandle).actor;
-    this.hsm.transition(NotificationConnecting);
-  }
-}
-
 export class NotificationConnecting extends NotificationChannelBase {
   protected override _checkInvariant(): void {
     inv.assertNotificationConnecting(this.ctx);
@@ -166,11 +142,7 @@ export class NotificationConnecting extends NotificationChannelBase {
   }
 
   async doSpawnTcpChildren(): Promise<void> {
-    if (this.ctx.children !== undefined) {
-      this.notifyNow.doBeginEnroll();
-      return;
-    }
-    const channel = this.ctx.channelMailbox!;
+    const channel: CBNotificationChannelActorRef = this.ctx.channelMailbox!;
     this.ctx.children = await this.hsm.port.spawnTcpChildren(channel);
     this.notifyNow.doBeginEnroll();
   }
@@ -188,7 +160,7 @@ export class NotificationTransport extends NotificationChannelBase {
   }
 
   async doWriteEnroll(): Promise<void> {
-    const enroll = this.ctx.requestQueue[0];
+    const enroll: NotificationEnrollRequest | undefined = this.ctx.requestQueue[0];
     if (enroll === undefined) {
       return;
     }
@@ -229,11 +201,11 @@ export class NotificationTransport extends NotificationChannelBase {
       return;
     }
     this.ctx.enrolled = true;
-    const parsed = parseAnswerTerm(answer.term);
+    const parsed: ParsedAnswer = parseAnswerTerm(answer.term);
     if (parsed.sender !== undefined && parsed.sender !== "") {
       this.ctx.serverId = encodeCbString(parsed.sender.trim());
     }
-    const clientName = parsed.returnData ?? answer.result;
+    const clientName: string | undefined = parsed.returnData ?? answer.result;
     if (clientName !== undefined) {
       this.ctx.clientId = encodeCbString(clientName);
     }
@@ -289,7 +261,7 @@ export class NotificationSession extends NotificationTransport {
 
   /**
    * Absorb the reader/writer interrupt acknowledgement while the channel is
-   * still in a live session state. {@link NotificationChannelBase.resolveNotificationReadTimeout}
+   * still in a live session state. {@link NotificationAwaiting.doNotificationReadTimeout}
    * interrupts the blocked notification reader on a getNotification timeout and
    * then returns to {@link NotificationIdle}; the resulting `onReaderInterrupted`
    * ack must be noted here instead of bubbling up as an unhandled event
@@ -324,20 +296,17 @@ export class NotificationIdle extends NotificationSession {
     if (this.ctx.pendingNotification === undefined) {
       throw new Error("no pending notification waiter");
     }
-    const queued = this.ctx.notificationQueue.shift();
+    const queued: CBAnswer | undefined = this.ctx.notificationQueue.shift();
     if (queued !== undefined) {
       this.clearNotificationReadTimer();
-      const waiter = this.ctx.consumePendingNotification();
-      cbTraceAnswer("notification:dequeued", queued);
+      const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } = this.ctx.consumePendingNotification();
+      cbTrace("notification:dequeued", queued);
       waiter.resolve(queued);
       return;
     }
     this.clearNotificationReadTimer();
     if (timeoutMs !== undefined && timeoutMs > 0) {
-      this.ctx.notificationReadTimer = this.hsm.port.setTimeout(() => {
-        this.ctx.notificationReadTimer = undefined;
-        this.notify.doNotificationReadTimeout();
-      }, timeoutMs);
+      this.ctx.notificationReadTimer = this.hsm.port.setTimeout( () => { this.ctx.notificationReadTimer = undefined; this.notify.doNotificationReadTimeout(); }, timeoutMs );
     }
     this.hsm.transition(NotificationAwaiting);
     this.ctx.children!.reader.notify.beginAwait();
@@ -348,8 +317,8 @@ export class NotificationIdle extends NotificationSession {
       this.ctx.notificationQueue.push(answer);
       return;
     }
-    const waiter = this.ctx.consumePendingNotification();
-    cbTraceAnswer("notification:push", answer);
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } = this.ctx.consumePendingNotification();
+    cbTrace("notification:push", answer);
     waiter.resolve(answer);
   }
 }
@@ -361,28 +330,40 @@ export class NotificationAwaiting extends NotificationSession {
 
   doNotificationReadTimeout(): void {
     this._checkInvariant();
-    this.resolveNotificationReadTimeout();
+    this.clearNotificationReadTimer();
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } | undefined = this.ctx.pendingNotification;
+    if (waiter === undefined) {
+      return;
+    }
+    this.ctx.pendingNotification = undefined;
+    try {
+      this.ctx.children?.reader.notify.interrupt();
+    } catch {
+      // reader may already be idle
+    }
+    waiter.resolve( { ok: false, completion: CB_IPC_COMPLETIONS.TIMEOUT, result: "timeout", term: 'ipcanswer("",timeout,"timeout").', } );
+    this.hsm.transition(NotificationIdle);
   }
 
   onReaderAnswer(answer: CBAnswer): void {
     this.clearNotificationReadTimer();
-    const waiter = this.ctx.consumePendingNotification();
-    cbTraceAnswer("notification:read", answer);
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } = this.ctx.consumePendingNotification();
+    cbTrace("notification:read", answer);
     waiter.resolve(answer);
     this.hsm.transition(NotificationIdle);
   }
 
   onReaderNotification(answer: CBAnswer): void {
     this.clearNotificationReadTimer();
-    const waiter = this.ctx.consumePendingNotification();
-    cbTraceAnswer("notification:push", answer);
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } = this.ctx.consumePendingNotification();
+    cbTrace("notification:push", answer);
     waiter.resolve(answer);
     this.hsm.transition(NotificationIdle);
   }
 
   onReaderFailed(message: string): void {
     this.clearNotificationReadTimer();
-    const waiter = this.ctx.pendingNotification;
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } | undefined = this.ctx.pendingNotification;
     if (waiter !== undefined) {
       this.ctx.pendingNotification = undefined;
       waiter.reject(new Error(message));

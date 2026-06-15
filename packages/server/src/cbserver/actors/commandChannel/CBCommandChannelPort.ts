@@ -1,105 +1,34 @@
-import * as net from "node:net";
 import * as ihsm from "ihsm";
-import type { CBCommandChannelPortConfig } from "./CBCommandChannelConfig";
-import { CBCommandChannelTop, type CBCommandChannelPortHandle, type CBCommandChannelMachineConfig } from "./CBCommandChannelConfig";
+import type { CBCommandChannelTop, CBCommandChannelActorRef, CBCommandChannelPortConfig } from "./CBCommandChannelConfig";
+import type { CBCommandChannelTcpChildren } from "./CBCommandChannelContext";
+import type { CBConnectionReaderActor } from "../reader/CBConnectionReaderConfig";
+import type { CBConnectionWriterActor } from "../writer/CBConnectionWriterConfig";
 import type { CBTcpConnectionOptions } from "../../shared/CBTcpOptions";
-import { DEFAULT_CB_TCP_CONNECT_MS, DEFAULT_CB_TCP_SOCKET_MS } from "../../shared/CBTcpOptions";
-import type { CBCommandChannelActorRef } from "./CBCommandChannelConfig";
-import { spawnCommandChannelTcpChildren } from "./spawnCommandChannelTcpChildren";
+import { CBTcpChannelPortBase } from "../../shared/CBTcpChannelPortBase";
+import { CbActorSpawnOptions } from "../../shared/cbActorSpawnOptions";
+import { CBConnectionReaderTop } from "../reader/CBConnectionReaderActor";
+import { CBConnectionReaderContext } from "../reader/CBConnectionReaderContext";
+import { CBConnectionWriterTop } from "../writer/CBConnectionWriterActor";
+import { CBConnectionWriterContext } from "../writer/CBConnectionWriterContext";
+import { CBConnectionWriterPort } from "../writer/CBConnectionWriterPort";
 
 /** Socket `write` surface used by the writer child port. */
 export type CBCommandChannelSocketWrite = Pick<CBCommandChannelPortConfig, "write">;
 
-type CommandInbound = ihsm.InboundActor<CBCommandChannelMachineConfig>;
-
 /** Production port — TCP socket I/O for the command channel. */
-export class CBCommandChannelPort extends ihsm.Port<typeof CBCommandChannelTop> {
-  private socket?: net.Socket;
-  private readonly connectTimeoutMs: number;
-  private readonly socketTimeoutMs: number;
-
-  constructor(private readonly options: CBTcpConnectionOptions) {
-    super();
-    this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CB_TCP_CONNECT_MS;
-    this.socketTimeoutMs = options.socketTimeoutMs ?? DEFAULT_CB_TCP_SOCKET_MS;
+export class CBCommandChannelPort extends CBTcpChannelPortBase<typeof CBCommandChannelTop> {
+  constructor(options: CBTcpConnectionOptions) {
+    super(options);
   }
 
-  async open(): Promise<void> {
-    if (this.socket !== undefined) {
-      return;
-    }
-    const { host, port } = this.options;
-    const inbound = this.actor;
-    this.socket = await new Promise<net.Socket>((resolve, reject) => {
-      const socket = new net.Socket();
-      const onError = (err: Error) => {
-        socket.removeAllListeners();
-        socket.destroy();
-        reject(err);
-      };
-      socket.setTimeout(this.connectTimeoutMs);
-      socket.once("timeout", () => onError(new Error("connect timeout")));
-      socket.once("error", onError);
-      socket.connect(port, host, () => {
-        if (this.socketTimeoutMs > 0) {
-          socket.setTimeout(this.socketTimeoutMs);
-        }
-        resolve(socket);
-      });
-    });
-
-    this.bindTcpSocket(this.socket, inbound);
-    inbound.notify.onSocketConnect();
-  }
-
-  private bindTcpSocket(socket: net.Socket, inbound: CommandInbound): void {
-    socket.on("data", (chunk: Buffer) => {
-      inbound.notify.onSocketData(chunk.toString("utf8"));
-    });
-    socket.on("drain", () => {
-      inbound.notify.onSocketDrain();
-    });
-    socket.once("end", () => {
-      inbound.notify.onSocketEnd();
-    });
-    socket.once("close", (hadError: boolean) => {
-      inbound.notify.onSocketClose(hadError);
-    });
-    socket.on("error", (err) => {
-      inbound.notify.onSocketError(String(err));
-    });
-    socket.on("timeout", () => {
-      inbound.notify.onSocketTimeout();
-    });
-  }
-
-  async write(buffer: Buffer): Promise<void> {
-    const socket = this.socket;
-    if (socket === undefined) {
-      throw new Error("socket is not open");
-    }
-    await new Promise<void>((resolve, reject) => {
-      socket.write(buffer, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve();
-      });
-    });
-  }
-
-  destroy(): void {
-    this.socket?.removeAllListeners();
-    this.socket?.destroy();
-    this.socket = undefined;
-  }
-
-  async spawnTcpChildren(channel: CBCommandChannelActorRef) {
-    return spawnCommandChannelTcpChildren(
-      channel as never as ihsm.ParentActor<typeof CBCommandChannelTop>,
-      channel,
-      this,
-    );
+  async spawnTcpChildren(channel: CBCommandChannelActorRef): Promise<CBCommandChannelTcpChildren> {
+    const parent: ihsm.ParentActor<typeof CBCommandChannelTop> = channel as never;
+    const reader: CBConnectionReaderActor = ihsm.makeChildActor(parent, CBConnectionReaderTop, new CBConnectionReaderContext(channel), undefined, new CbActorSpawnOptions(),);
+    const writer: CBConnectionWriterActor = ihsm.makeChildActor(parent, CBConnectionWriterTop, new CBConnectionWriterContext(channel), new CBConnectionWriterPort(this), new CbActorSpawnOptions(),);
+    await reader.hsm.sync();
+    await writer.hsm.sync();
+    await reader.call.initialize();
+    await writer.call.initialize();
+    return { reader, writer };
   }
 }

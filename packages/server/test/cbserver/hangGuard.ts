@@ -60,12 +60,6 @@ export type LiveServerSnapshot = {
   connections: number;
 };
 
-export function formatLiveServersSnapshot(
-  servers: ReadonlyArray<{ actor: { hsm: { currentStateName: string } }; ctx: { pid?: number; connections: { size: number } } }>,
-): LiveServerSnapshot[] {
-  return servers.map((server) => ({
-    state: server.actor.hsm.currentStateName,
-    pid: server.ctx.pid,
-    connections: server.ctx.connections.size,
-  }));
+export function formatLiveServersSnapshot(servers: ReadonlyArray<{ actor: { hsm: { currentStateName: string } }; ctx: { pid?: number; connections: { size: number } } }>,): LiveServerSnapshot[] {
+  return servers.map( (server) => ({ state: server.actor.hsm.currentStateName, pid: server.ctx.pid, connections: server.ctx.connections.size, }) );
 }

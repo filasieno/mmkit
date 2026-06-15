@@ -8,7 +8,6 @@
  * Extensions used by libcbc/mmkit: RETELL, SET_MODULE_CONTEXT, GET_MODULE_CONTEXT,
  * GET_MODULE_PATH, NOTIFICATION_REQUEST
  */
-import { encodeCbString } from "@mmkit/shared/dist/cb-tcp";
 
 /** ipcanswer completion values (`IpcSyntax.typ` + `CInterface.typ` CB_* + client-side). */
 export const CB_IPC_COMPLETIONS = {
@@ -75,7 +74,6 @@ export const CB_STDIO_STREAM_EVENTS = {
 
 /** Supervisor subprocess / log-reader notifications derived from the above. */
 export const CB_SERVER_PROCESS_NOTIFICATIONS = [
-  "onSpawn",
   "onStdoutData",
   "onStdoutEnd",
   "onStdoutClose",
@@ -119,82 +117,3 @@ export const CB_IPC_METHODS = {
 } as const;
 
 export type CBIpcMethod = (typeof CB_IPC_METHODS)[keyof typeof CB_IPC_METHODS];
-
-export type AskFormat = "FRAMES" | "OBJNAMES" | "ASK";
-
-export function quoteModuleNames(modulePath: string): string {
-  if (/(.*)-[0-9](.*)/.test(modulePath)) {
-    return `'${modulePath.replaceAll("-", "'-'")}'`;
-  }
-  if (/(.*)\/[0-9](.*)/.test(modulePath)) {
-    return `'${modulePath.replaceAll("/", "'/'")}'`;
-  }
-  return modulePath;
-}
-
-export function buildTellPayload(frames: string): string {
-  return encodeCbString(frames);
-}
-
-export function buildUntellPayload(frames: string): string {
-  return encodeCbString(frames);
-}
-
-export function buildTellModelPayload(files: string[]): string {
-  return `[${files.map((f) => encodeCbString(f)).join(",")}]`;
-}
-
-export function buildRetellPayload(untellFrames: string, tellFrames: string): string {
-  return `[${encodeCbString(untellFrames)},${encodeCbString(tellFrames)}]`;
-}
-
-export function buildAskPayload(
-  query: string,
-  queryFormat: AskFormat | string = "OBJNAMES",
-  answerRep = "default",
-  rollbackTime = "Now",
-): string {
-  return `${queryFormat},${encodeCbString(query)},${encodeCbString(answerRep)},${encodeCbString(rollbackTime)}`;
-}
-
-export function buildHypoAskPayload(
-  frames: string,
-  query: string,
-  queryFormat: AskFormat | string = "ASK",
-  answerRep = "default",
-  rollbackTime = "Now",
-): string {
-  return [
-    encodeCbString(frames),
-    queryFormat,
-    encodeCbString(query),
-    encodeCbString(answerRep),
-    encodeCbString(rollbackTime),
-  ].join(",");
-}
-
-export function buildLpiCallPayload(call: string): string {
-  return encodeCbString(call);
-}
-
-/** Java CBShell / libcbc: prolog goals go through LPI_CALL as `PROLOG_CALL,<goal>`. */
-export function buildPrologCallPayload(statement: string): string {
-  const goal = statement.trim().replace(/\.\s*$/, "");
-  return encodeCbString(`PROLOG_CALL,${goal}`);
-}
-
-export function buildNextMessagePayload(messageType = "empty"): string {
-  return messageType;
-}
-
-export function buildNotificationRequestPayload(about: string, targetClientId: string): string {
-  return `${encodeCbString(about)},${encodeCbString(targetClientId)}`;
-}
-
-export function buildMkdirPayload(moduleName: string): string {
-  return encodeCbString(`${moduleName} in Module end`);
-}
-
-export function buildSetModuleContextPayload(modulePath: string): string {
-  return encodeCbString(quoteModuleNames(modulePath));
-}

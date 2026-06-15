@@ -1,27 +1,17 @@
 import * as ihsm from "ihsm";
-import { encodeCbString, parseAnswerTerm } from "@mmkit/shared/dist/cb-tcp";
+import { encodeCbString, parseAnswerTerm } from "@mmkit/base";
+import type { ParsedAnswer } from "@mmkit/base";
 import type { CBAnswer } from "../../shared/CBServerDefs";
-import { CBCommandChannelTop, type CBCommandChannelPortHandle } from "./CBCommandChannelConfig";
+import { CBCommandChannelTop } from "./CBCommandChannelConfig";
+import type { CBCommandChannelActorRef, CBCommandChannelPortHandle } from "./CBCommandChannelConfig";
 import type { CommandPendingRequest } from "./CBCommandChannelContext";
-import {
-  CB_IPC_METHODS,
-  buildAskPayload,
-  buildHypoAskPayload,
-  buildLpiCallPayload,
-  buildPrologCallPayload,
-  buildMkdirPayload,
-  buildNextMessagePayload,
-  buildNotificationRequestPayload,
-  buildRetellPayload,
-  buildSetModuleContextPayload,
-  buildTellModelPayload,
-  buildTellPayload,
-  buildUntellPayload,
-  isIpcTransportFailure,
-} from "../../shared/cbIpcCatalog";
-import { cbTrace, cbTraceAnswer } from "../../shared/cbTrace";
+import { CB_IPC_METHODS, isIpcTransportFailure, } from "../../shared/cbIpcCatalog";
+import { cbTrace } from "../../shared/cbTrace";
 import * as inv from "./CBCommandChannelInvariants";
 import * as self from "./CBCommandChannelActor";
+
+/** Command name plus the full argument set it was dispatched with — used in rejection errors. */
+type RejectedCommand = { command: string; [arg: string]: unknown };
 
 /**
  * Command TCP channel — state hierarchy (* = {@link ihsm.InitialState})
@@ -39,7 +29,24 @@ import * as self from "./CBCommandChannelActor";
  * ```
  */
 
+@ihsm.InitialState
+export class CommandUninitialized extends CBCommandChannelTop {
+  protected override _checkInvariant(): void {
+    inv.assertCommandUninitialized(this.ctx);
+  }
+
+  async initialize(): Promise<void> {
+    this._checkInvariant();
+    this.ctx.channelMailbox = (this.hsm.port as unknown as CBCommandChannelPortHandle).actor;
+    this.hsm.transition(CommandConnecting);
+  }
+}
+
 export class CommandChannelBase extends CBCommandChannelTop {
+  /**
+   * Shared command-channel handlers. Invariant check deferred to leaf states — see
+   * {@link module:cbserver/actors/commandChannel/CBCommandChannelInvariants}.
+   */
   protected override _checkInvariant(): void {}
 
   async getRawClientId(): Promise<string> {
@@ -51,78 +58,72 @@ export class CommandChannelBase extends CBCommandChannelTop {
     throw new Error("channel is not ready");
   }
 
-  rejectCommand(): void {
-    throw new Error("channel is not ready");
+  protected rejectCommand(details: RejectedCommand): void {
+    throw new Error(`channel is not ready (cannot dispatch ${JSON.stringify(details)})`);
   }
 
-  dispatchTell(_frames: string): void {
-    this.rejectCommand();
+  dispatchTell(frames: string): void {
+    this.rejectCommand({ command: "tell", frames });
   }
-  dispatchUntell(_frames: string): void {
-    this.rejectCommand();
+  dispatchUntell(frames: string): void {
+    this.rejectCommand({ command: "untell", frames });
   }
-  dispatchRetell(_untellFrames: string, _tellFrames: string): void {
-    this.rejectCommand();
+  dispatchRetell(untellFrames: string, tellFrames: string): void {
+    this.rejectCommand({ command: "retell", untellFrames, tellFrames });
   }
-  dispatchTellModel(..._files: string[]): void {
-    this.rejectCommand();
+  dispatchTellModel(...files: string[]): void {
+    this.rejectCommand({ command: "tellModel", files });
   }
-  dispatchAsk(_query: string, _queryFormat?: string, _answerRep?: string, _rollbackTime?: string): void {
-    this.rejectCommand();
+  dispatchAsk(query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): void {
+    this.rejectCommand({ command: "ask", query, queryFormat, answerRep, rollbackTime });
   }
-  dispatchHypoAsk(
-    _frames: string,
-    _query: string,
-    _queryFormat?: string,
-    _answerRep?: string,
-    _rollbackTime?: string,
-  ): void {
-    this.rejectCommand();
+  dispatchHypoAsk( frames: string, query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string ): void {
+    this.rejectCommand({ command: "hypoAsk", frames, query, queryFormat, answerRep, rollbackTime });
   }
-  dispatchLpicall(_lpiCall: string): void {
-    this.rejectCommand();
+  dispatchLpicall(lpiCall: string): void {
+    this.rejectCommand({ command: "lpicall", lpiCall });
   }
-  dispatchProlog(_statement: string): void {
-    this.rejectCommand();
+  dispatchProlog(statement: string): void {
+    this.rejectCommand({ command: "prolog", statement });
   }
   dispatchWhy(): void {
-    this.rejectCommand();
+    this.rejectCommand({ command: "why" });
   }
-  dispatchCd(_modulePath?: string): void {
-    this.rejectCommand();
+  dispatchCd(modulePath?: string): void {
+    this.rejectCommand({ command: "cd", modulePath });
   }
   dispatchPwd(): void {
-    this.rejectCommand();
+    this.rejectCommand({ command: "pwd" });
   }
-  dispatchLm(_modulePath?: string): void {
-    this.rejectCommand();
+  dispatchLm(modulePath?: string): void {
+    this.rejectCommand({ command: "lm", modulePath });
   }
-  dispatchLs(_className?: string): void {
-    this.rejectCommand();
+  dispatchLs(className?: string): void {
+    this.rejectCommand({ command: "ls", className });
   }
-  dispatchMkdir(_moduleName: string): void {
-    this.rejectCommand();
+  dispatchMkdir(moduleName: string): void {
+    this.rejectCommand({ command: "mkdir", moduleName });
   }
   dispatchWho(): void {
-    this.rejectCommand();
+    this.rejectCommand({ command: "who" });
   }
   dispatchSub(): void {
-    this.rejectCommand();
+    this.rejectCommand({ command: "sub" });
   }
-  dispatchShow(_objectName: string): void {
-    this.rejectCommand();
+  dispatchShow(objectName: string): void {
+    this.rejectCommand({ command: "show", objectName });
   }
-  dispatchNextMessage(_messageType?: string): void {
-    this.rejectCommand();
+  dispatchNextMessage(messageType?: string): void {
+    this.rejectCommand({ command: "nextMessage", messageType });
   }
-  dispatchStopServer(_password = ""): void {
-    this.rejectCommand();
+  dispatchStopServer(password = ""): void {
+    this.rejectCommand({ command: "stopServer", password });
   }
   dispatchReportClients(): void {
-    this.rejectCommand();
+    this.rejectCommand({ command: "reportClients" });
   }
-  dispatchNotificationRequest(_about: string, _tool: string): void {
-    this.rejectCommand();
+  dispatchNotificationRequest(about: string, tool: string): void {
+    this.rejectCommand({ command: "notificationRequest", about, tool });
   }
 
   onSocketConnect(): void {
@@ -149,7 +150,7 @@ export class CommandChannelBase extends CBCommandChannelTop {
       this.notifyNow.doFinalizeClose();
       return;
     }
-    const reason = hadError ? "socket closed with error" : "socket closed";
+    const reason: string = hadError ? "socket closed with error" : "socket closed";
     this.notifyNow.doBreakTransport(reason);
   }
   onSocketError(errorMessage: string): void {
@@ -192,19 +193,6 @@ export class CommandChannelBase extends CBCommandChannelTop {
   }
 }
 
-@ihsm.InitialState
-export class CommandUninitialized extends CommandChannelBase {
-  protected override _checkInvariant(): void {
-    inv.assertCommandUninitialized(this.ctx);
-  }
-
-  async initialize(): Promise<void> {
-    this._checkInvariant();
-    this.ctx.channelMailbox = (this.hsm.port as unknown as CBCommandChannelPortHandle).actor;
-    this.hsm.transition(CommandConnecting);
-  }
-}
-
 export class CommandConnecting extends CommandChannelBase {
   protected override _checkInvariant(): void {
     inv.assertCommandConnecting(this.ctx);
@@ -231,7 +219,7 @@ export class CommandConnecting extends CommandChannelBase {
       this.notifyNow.doBeginEnroll();
       return;
     }
-    const channel = this.ctx.channelMailbox!;
+    const channel: CBCommandChannelActorRef = this.ctx.channelMailbox!;
     this.ctx.children = await this.hsm.port.spawnTcpChildren(channel);
     this.notifyNow.doBeginEnroll();
   }
@@ -251,7 +239,7 @@ export class CommandTransport extends CommandChannelBase {
 
   protected dispatchIpc(method: string, data: string, client?: string, server?: string): void {
     this._checkInvariant();
-    const waiter = this.ctx.consumePendingCommand();
+    const waiter: { resolve(answer: CBAnswer): void; reject(error: Error): void } = this.ctx.consumePendingCommand();
     this.ctx.requestQueue.push({ method, data, client, server, resolve: waiter.resolve, reject: waiter.reject });
     if (this.hsm.currentState === CommandIdle) {
       this.hsm.transition(RequestProcessing);
@@ -269,15 +257,10 @@ export class CommandTransport extends CommandChannelBase {
       return;
     }
     this.ctx.activeRequest = this.ctx.requestQueue[0];
-    const active = this.ctx.activeRequest;
+    const active: CommandPendingRequest | undefined = this.ctx.activeRequest;
     this.ctx.pendingFrame = this.ctx.buildIpcFrame(active.method, active.data, active.client, active.server);
     if (active.method === CB_IPC_METHODS.NOTIFICATION_REQUEST) {
-      cbTrace("ipc:NOTIFICATION_REQUEST:frame", {
-        clientId: this.ctx.clientId,
-        serverId: this.ctx.serverId,
-        data: active.data,
-        frame: this.ctx.pendingFrame.toString("utf8").replace(/\n/g, "\\n"),
-      });
+      cbTrace( "ipc:NOTIFICATION_REQUEST:frame", { clientId: this.ctx.clientId, serverId: this.ctx.serverId, data: active.data, frame: this.ctx.pendingFrame.toString("utf8").replace(/\n/g, "\\n"), } );
     }
     this.hsm.transition(Writing);
     this.notify.doWriteActive();
@@ -330,12 +313,12 @@ export class CommandTransport extends CommandChannelBase {
       return;
     }
 
-    const active = this.ctx.activeRequest!;
+    const active: CommandPendingRequest = this.ctx.activeRequest!;
     this.ctx.requestQueue.shift();
     this.ctx.activeRequest = undefined;
     this.ctx.pendingFrame = undefined;
 
-    cbTraceAnswer(`ipc:${active.method}`, answer);
+    cbTrace(`ipc:${active.method}`, answer);
 
     if (active.method === CB_IPC_METHODS.ENROLL_ME) {
       if (!answer.ok) {
@@ -344,11 +327,11 @@ export class CommandTransport extends CommandChannelBase {
         return;
       }
       this.ctx.enrolled = true;
-      const parsed = parseAnswerTerm(answer.term);
+      const parsed: ParsedAnswer = parseAnswerTerm(answer.term);
       if (parsed.sender !== undefined && parsed.sender !== "") {
         this.ctx.serverId = encodeCbString(parsed.sender.trim());
       }
-      const clientName = parsed.returnData ?? answer.result;
+      const clientName: string | undefined = parsed.returnData ?? answer.result;
       if (clientName !== undefined) {
         this.ctx.clientId = encodeCbString(clientName);
       }
@@ -387,7 +370,7 @@ export class CommandTransport extends CommandChannelBase {
 
   doFailActive(message: string): void {
     this._checkInvariant();
-    const active = this.ctx.activeRequest ?? this.ctx.requestQueue.shift();
+    const active: CommandPendingRequest | undefined = this.ctx.activeRequest ?? this.ctx.requestQueue.shift();
     if (this.ctx.activeRequest !== undefined) {
       this.ctx.requestQueue.shift();
     }
@@ -427,52 +410,59 @@ export class CommandIdle extends CommandSession {
   }
 
   dispatchTell(frames: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.TELL, buildTellPayload(frames));
+    this.dispatchIpc(CB_IPC_METHODS.TELL, encodeCbString(frames));
   }
   dispatchUntell(frames: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.UNTELL, buildUntellPayload(frames));
+    this.dispatchIpc(CB_IPC_METHODS.UNTELL, encodeCbString(frames));
   }
   dispatchRetell(untellFrames: string, tellFrames: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.RETELL, buildRetellPayload(untellFrames, tellFrames));
+    this.dispatchIpc(CB_IPC_METHODS.RETELL, `[${encodeCbString(untellFrames)},${encodeCbString(tellFrames)}]`,);
   }
   dispatchTellModel(...files: string[]): void {
-    this.dispatchIpc(CB_IPC_METHODS.TELL_MODEL, buildTellModelPayload(files));
+    this.dispatchIpc(CB_IPC_METHODS.TELL_MODEL, `[${files.map((f) => encodeCbString(f)).join(",")}]`);
   }
-  dispatchAsk(query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.ASK, buildAskPayload(query, queryFormat, answerRep, rollbackTime));
+  dispatchAsk(query: string, queryFormat = "OBJNAMES", answerRep = "default", rollbackTime = "Now"): void {
+    this.dispatchIpc(CB_IPC_METHODS.ASK, `${queryFormat},${encodeCbString(query)},${encodeCbString(answerRep)},${encodeCbString(rollbackTime)}`,);
   }
-  dispatchHypoAsk(frames: string, query: string, queryFormat?: string, answerRep?: string, rollbackTime?: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.HYPO_ASK, buildHypoAskPayload(frames, query, queryFormat, answerRep, rollbackTime));
+  dispatchHypoAsk( frames: string, query: string, queryFormat = "ASK", answerRep = "default", rollbackTime = "Now" ): void {
+    this.dispatchIpc( CB_IPC_METHODS.HYPO_ASK, [ encodeCbString(frames), queryFormat, encodeCbString(query), encodeCbString(answerRep), encodeCbString(rollbackTime), ].join(","), );
   }
   dispatchLpicall(lpiCall: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.LPI_CALL, buildLpiCallPayload(lpiCall));
+    this.dispatchIpc(CB_IPC_METHODS.LPI_CALL, encodeCbString(lpiCall));
   }
   dispatchProlog(statement: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.LPI_CALL, buildPrologCallPayload(statement));
+    const goal: string = statement.trim().replace(/\.\s*$/, "");
+    this.dispatchIpc(CB_IPC_METHODS.LPI_CALL, encodeCbString(`PROLOG_CALL,${goal}`));
   }
   dispatchWhy(): void {
-    this.dispatchIpc(CB_IPC_METHODS.NEXT_MESSAGE, buildNextMessagePayload("ERROR_REPORT"));
+    this.dispatchIpc(CB_IPC_METHODS.NEXT_MESSAGE, "ERROR_REPORT");
   }
   dispatchCd(modulePath?: string): void {
     if (modulePath === undefined || modulePath === "") {
       this.dispatchIpc(CB_IPC_METHODS.GET_MODULE_CONTEXT, "");
       return;
     }
-    this.dispatchIpc(CB_IPC_METHODS.SET_MODULE_CONTEXT, buildSetModuleContextPayload(modulePath));
+    let quoted: string = modulePath;
+    if (/(.*)-[0-9](.*)/.test(modulePath)) {
+      quoted = `'${modulePath.replaceAll("-", "'-'")}'`;
+    } else if (/(.*)\/[0-9](.*)/.test(modulePath)) {
+      quoted = `'${modulePath.replaceAll("/", "'/'")}'`;
+    }
+    this.dispatchIpc(CB_IPC_METHODS.SET_MODULE_CONTEXT, encodeCbString(quoted));
   }
   dispatchPwd(): void {
     this.dispatchIpc(CB_IPC_METHODS.GET_MODULE_PATH, "");
   }
   dispatchLm(modulePath?: string): void {
-    const query = modulePath === undefined || modulePath === "" ? "listModule" : `listModule[${modulePath}/module]`;
+    const query: string = modulePath === undefined || modulePath === "" ? "listModule" : `listModule[${modulePath}/module]`;
     this.dispatchAsk(query, "OBJNAMES", "FRAME", "Now");
   }
   dispatchLs(className?: string): void {
-    const target = className === undefined || className === "" ? "Individual" : className;
+    const target: string = className === undefined || className === "" ? "Individual" : className;
     this.dispatchAsk(`find_instances[${target}/class]`, "OBJNAMES", "LABEL", "Now");
   }
   dispatchMkdir(moduleName: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.TELL, buildMkdirPayload(moduleName));
+    this.dispatchIpc(CB_IPC_METHODS.TELL, encodeCbString(`${moduleName} in Module end`));
   }
   dispatchWho(): void {
     this.dispatchAsk("find_instances[CB_User/class]", "OBJNAMES", "LABEL", "Now");
@@ -484,7 +474,7 @@ export class CommandIdle extends CommandSession {
     this.dispatchAsk(`get_object[${objectName}/objname]`, "OBJNAMES", "FRAME", "Now");
   }
   dispatchNextMessage(messageType?: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.NEXT_MESSAGE, buildNextMessagePayload(messageType ?? "empty"));
+    this.dispatchIpc(CB_IPC_METHODS.NEXT_MESSAGE, messageType ?? "empty");
   }
   dispatchStopServer(password = ""): void {
     this.dispatchIpc(CB_IPC_METHODS.STOP_SERVER, password);
@@ -493,7 +483,7 @@ export class CommandIdle extends CommandSession {
     this.dispatchIpc(CB_IPC_METHODS.REPORT_CLIENTS, "");
   }
   dispatchNotificationRequest(about: string, tool: string): void {
-    this.dispatchIpc(CB_IPC_METHODS.NOTIFICATION_REQUEST, buildNotificationRequestPayload(about, tool));
+    this.dispatchIpc(CB_IPC_METHODS.NOTIFICATION_REQUEST, `${encodeCbString(about)},${encodeCbString(tool)}`,);
   }
 }
 
@@ -549,12 +539,7 @@ export class CommandClosing extends CommandTransport {
 
   onEntry(): void {
     if (this.ctx.enrolled) {
-      this.ctx.requestQueue.push({
-        method: CB_IPC_METHODS.CANCEL_ME,
-        data: "",
-        resolve: () => undefined,
-        reject: () => undefined,
-      });
+      this.ctx.requestQueue.push( { method: CB_IPC_METHODS.CANCEL_ME, data: "", resolve: () => undefined, reject: () => undefined, } );
       this.hsm.transition(RequestProcessing);
       this.notify.doProcessNext();
       return;
@@ -689,8 +674,8 @@ export class CommandClosed extends CommandTerminal {
     this._checkInvariant();
   }
 
-  rejectCommand(): void {
-    throw new Error("channel is closed");
+  rejectCommand(details: RejectedCommand): void {
+    throw new Error(`channel is closed (cannot dispatch ${JSON.stringify(details)})`);
   }
 }
 
@@ -708,8 +693,8 @@ export class CommandBroken extends CommandTerminal {
     this._checkInvariant();
   }
 
-  rejectCommand(): void {
-    throw new Error(this.ctx.brokenReason ?? "channel broken");
+  rejectCommand(details: RejectedCommand): void {
+    throw new Error(`${this.ctx.brokenReason ?? "channel broken"} (cannot dispatch ${JSON.stringify(details)})`);
   }
 }
 

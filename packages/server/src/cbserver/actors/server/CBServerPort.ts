@@ -1,10 +1,13 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import * as ihsm from "ihsm";
 import { buildLaunchRequest } from "./settings/CBServerSettings";
-import { awaitTcpListen as pollUntilTcpListen, type TcpListenProbeOptions } from "./tcpPortProbe";
-import { CBServerTop, type CBServerConfig, type CBServerMachineConfig, type CBServerActorRef } from "./CBServerConfig";
+import type { CBServerConfig } from "./settings/CBServerSettings";
+import type { CBServerTop, CBServerMachineConfig, CBServerActorRef } from "./CBServerConfig";
 import type { CBConnectionContext } from "../connection/CBServerConnectionContext";
 import type { CBConnectionOrchestratorPort } from "../connection/CBConnectionOrchestratorPort";
+import { probeTcpConnect } from "./tcpPortProbe";
+import type { TcpConnectProbeOptions } from "./tcpPortProbe";
 import { spawnLogReaderChildren } from "./spawnLogReaderChildren";
 import { spawnConnectionChild } from "./spawnConnectionChild";
 
@@ -53,25 +56,21 @@ function ensureParentExitHook(): void {
     return;
   }
   parentExitHookInstalled = true;
-
-  // `exit` allows only synchronous work — SIGKILL is the reliable last resort.
-  process.on("exit", () => {
-    reapTrackedChildrenOnParentExit("SIGKILL");
-  });
-
+  process.on("exit", () => { reapTrackedChildrenOnParentExit("SIGKILL"); });
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    process.on(signal, () => {
-      reapTrackedChildrenOnParentExit("SIGKILL");
-    });
+    process.on(signal, () => { reapTrackedChildrenOnParentExit("SIGKILL"); });
   }
 }
 
 function trackCbserverChild(pid: number, child: ChildProcess): void {
   trackedChildren.set(pid, child);
   ensureParentExitHook();
-  child.once("exit", () => {
-    trackedChildren.delete(pid);
-  });
+  child.once("exit", () => { trackedChildren.delete(pid); });
+}
+
+/** Test hook — register a child for parent-exit reap without spawning via {@link CBServerPort}. */
+export function registerTrackedCbserverChild(pid: number, child: ChildProcess): void {
+  trackCbserverChild(pid, child);
 }
 
 /** Subprocess port — Node `child_process` events become CBServer internal notifications. */
@@ -79,21 +78,9 @@ export class CBServerPort extends ihsm.Port<typeof CBServerTop> {
   async spawn(config: CBServerConfig): Promise<ihsm.ResultWithSubscription<number>> {
     const inbound = this.actor;
     const launch = buildLaunchRequest(config);
-    const child = spawn(launch.executablePath, [...launch.args], {
-      cwd: launch.cwd,
-      env: launch.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      // Own process group on Unix so parent-exit reap can kill the whole tree.
-      detached: process.platform !== "win32",
-      windowsHide: true,
-    });
+    const child = spawn(launch.executablePath, [...launch.args], { cwd: launch.cwd, env: launch.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
     const subscription = this.bindChildProcess(child, inbound);
-    const pid =
-      child.pid ??
-      (await new Promise<number | undefined>((resolve) => {
-        child.once("spawn", () => resolve(child.pid));
-        child.once("error", () => resolve(undefined));
-      }));
+    const pid = child.pid ?? (await new Promise<number | undefined>((resolve) => { child.once("spawn", () => resolve(child.pid)); child.once("error", () => resolve(undefined)); }));
     if (pid === undefined) {
       subscription.dispose();
       throw new Error(`failed to spawn ${launch.executablePath}`);
@@ -106,24 +93,19 @@ export class CBServerPort extends ihsm.Port<typeof CBServerTop> {
     killCbserverProcessTree(pid, signal);
   }
 
-  async awaitTcpListen(options: TcpListenProbeOptions): Promise<void> {
-    await pollUntilTcpListen(options);
+  async probeTcpConnect(options: TcpConnectProbeOptions): Promise<boolean> {
+    return probeTcpConnect(options);
   }
 
   async armLogReaders(server: CBServerActorRef) {
     return spawnLogReaderChildren(server as never as ihsm.ParentActor<typeof CBServerTop>, server);
   }
 
-  async spawnConnection(
-    server: CBServerActorRef,
-    context: CBConnectionContext,
-    orchestratorPort: CBConnectionOrchestratorPort,
-  ) {
+  async spawnConnection(server: CBServerActorRef, context: CBConnectionContext, orchestratorPort: CBConnectionOrchestratorPort) {
     return spawnConnectionChild(server as never as ihsm.ParentActor<typeof CBServerTop>, context, orchestratorPort);
   }
 
-  private bindChildProcess(child: ChildProcess,
-    inbound: ihsm.InboundActor<CBServerMachineConfig>,): ihsm.Disposable {
+  private bindChildProcess(child: ChildProcess, inbound: ihsm.InboundActor<CBServerMachineConfig>): ihsm.Disposable {
     let active = true;
 
     const detach = (): void => {
@@ -145,66 +127,20 @@ export class CBServerPort extends ihsm.Port<typeof CBServerTop> {
       child.removeAllListeners("disconnect");
     };
 
-    const postSpawn = (): void => {
-      if (active) {
-        inbound.notify.onSpawn();
-      }
-    };
-    if (child.pid !== undefined) {
-      postSpawn();
-    } else {
-      child.once("spawn", postSpawn);
-    }
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      if (active) {
-        inbound.notify.onStdoutData(chunk.toString("utf8"));
-      }
-    });
+    child.stdout?.on("data", (chunk: Buffer) => { if (active) { inbound.notify.onStdoutData(chunk.toString("utf8")); } });
     child.stdout?.once("end", () => active && inbound.notify.onStdoutEnd());
     child.stdout?.once("close", () => active && inbound.notify.onStdoutClose());
     child.stdout?.once("error", (err) => active && inbound.notify.onStdoutStdioError(String(err)));
 
-    child.stderr?.on("data", (chunk: Buffer) => {
-      if (active) {
-        inbound.notify.onStderrData(chunk.toString("utf8"));
-      }
-    });
+    child.stderr?.on("data", (chunk: Buffer) => { if (active) { inbound.notify.onStderrData(chunk.toString("utf8")); } });
     child.stderr?.once("end", () => active && inbound.notify.onStderrEnd());
     child.stderr?.once("close", () => active && inbound.notify.onStderrClose());
     child.stderr?.once("error", (err) => active && inbound.notify.onStderrStdioError(String(err)));
 
-    child.once("exit", (code, signal) => {
-      if (!active) {
-        return;
-      }
-      inbound.notify.onProcessExit(code, signal);
-      detach();
-    });
-
-    child.once("close", (code, signal) => {
-      if (!active) {
-        return;
-      }
-      inbound.notify.onProcessClose(code, signal);
-      detach();
-    });
-
-    child.once("error", (err) => {
-      if (!active) {
-        return;
-      }
-      inbound.notify.onProcessError(String(err));
-      detach();
-    });
-
-    child.once("disconnect", () => {
-      if (!active) {
-        return;
-      }
-      inbound.notify.onDisconnect();
-      detach();
-    });
+    child.once("exit", (code, signal) => { if (!active) { return; } inbound.notify.onProcessExit(code, signal); detach(); });
+    child.once("close", (code, signal) => { if (!active) { return; } inbound.notify.onProcessClose(code, signal); detach(); });
+    child.once("error", (err) => { if (!active) { return; } inbound.notify.onProcessError(String(err)); detach(); });
+    child.once("disconnect", () => { if (!active) { return; } inbound.notify.onDisconnect(); detach(); });
 
     return { dispose: detach };
   }
